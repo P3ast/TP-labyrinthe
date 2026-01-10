@@ -4,12 +4,11 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <unordered_set>
 #include <queue>
 #include <stack>
+#include <functional>
 #include "GraphicAllegro5.h"
-
-#define NB_MAX_WIDTH     100
-#define NB_MAX_HEIGHT    100
 
 enum class SpriteType : unsigned char {
     GROUND = ' ', OUTSIDE = 'X', WALL = '#',
@@ -17,7 +16,6 @@ enum class SpriteType : unsigned char {
     BOX = '$', BOX_PLACED = '*', GOAL = '.'
 };
 
-// Noeud : état du jeu à un instant t (positions joueur + caisses)
 struct Node {
     std::pair<int, int> playerPos;
     std::set<std::pair<int, int>> boxesPos;
@@ -27,6 +25,24 @@ struct Node {
         if (playerPos != other.playerPos) return playerPos < other.playerPos;
         return boxesPos < other.boxesPos;
     }
+    bool operator==(const Node& other) const { // Ã©galitÃ©
+        return playerPos == other.playerPos && boxesPos == other.boxesPos;
+    }
+};
+
+namespace std { // hash optimisÃ©
+    template<> struct hash<Node> {
+        size_t operator()(const Node& n) const {
+            return hash<int>()(n.playerPos.first) ^ (hash<int>()(n.playerPos.second) << 1);
+        }
+    };
+}
+
+// Structure pour A* et Best-First (Greedy)
+struct PriorityNode {
+    Node node;
+    double priority; // f(n) pour A* ou h(n) pour Greedy
+    bool operator>(const PriorityNode& other) const { return priority > other.priority; }
 };
 
 struct Square {
@@ -35,42 +51,44 @@ struct Square {
     bool isDeadlock = false;
 };
 
-// Ordre imposé : HAUT, BAS, GAUCHE, DROITE [cite: 109]
 const std::vector<std::pair<int,int>> neighbours = {
     {-1, 0}, {1, 0}, {0, -1}, {0, 1}
 };
 
-enum Direction {
-    TOP = 0, BOTTOM = 1, LEFT = 2, RIGHT = 3, DIRECTION_MAX = 4
-};
+enum Direction { TOP = 0, BOTTOM = 1, LEFT = 2, RIGHT = 3, DIRECTION_MAX = 4 };
 
 class Maze {
 private:
     std::vector<std::vector<Square>> m_field;
     std::pair<int, int> m_playerPosition;
+    std::vector<std::pair<int,int>> m_goals; // cache buts
     unsigned int m_lig = 0, m_col = 0;
     char m_playerDirection = RIGHT;
 
 public:
     Maze(const std::string& levelPath);
     bool updatePlayer(char dir);
-    bool isWall(const std::pair<int, int>& position) const;
-    bool isBox(const std::pair<int, int>& position) const;
-    bool isGoal(const std::pair<int, int>& position) const;
-    bool isFree(const std::pair<int, int>& position) const;
-    bool pushBox(const std::pair<int, int>& position, char dir);
-    bool isSolution() const;
+    bool isWall(const std::pair<int, int>& p) const;
+    bool isBox(const std::pair<int, int>& p) const;
+    bool isGoal(const std::pair<int, int>& p) const;
+    bool pushBox(const std::pair<int, int>& p, char dir);
+    bool isSolution(const Node& n) const;
     void draw(GraphicAllegro5& g) const;
-    void playSolution(GraphicAllegro5& g, const std::vector<char>& movesSolution);
-
-    // Méthodes Niveau 1
-    std::set<std::pair<int, int>> getBoxesPositions() const;
+    void playSolution(GraphicAllegro5& g, const std::vector<char>& sol);
     void setGameState(const Node& n);
+    std::set<std::pair<int, int>> getBoxesPositions() const;
     void detectStaticDeadlocks();
+
+    // Niveau 1
     std::vector<char> solveBFS();
     std::vector<char> solveDFS();
 
-    const std::pair<int, int>& getPlayerPosition() const { return m_playerPosition; }
+    // Niveau 2
+    double calculateHeuristic(const Node& n); // heuristic opt [cite: 141]
+    std::vector<char> solveBestFirst();       // Greedy Search [cite: 147]
+    std::vector<char> solveAStar();           // A* Search
+private:
+    void cacheGoalPositions(); // prÃ©calc buts
 };
 
 #endif

@@ -3,7 +3,10 @@
 #include <iostream>
 #include <queue>
 #include <stack>
+#include <cmath>
+#include <algorithm>
 
+// Constructeur : Charge le niveau et initialise la matrice 2D [cite: 64, 65, 78]
 Maze::Maze(const std::string& levelPath) {
     std::vector<std::string> lines;
     std::string line;
@@ -11,7 +14,7 @@ Maze::Maze(const std::string& levelPath) {
     while (std::getline(iss, line)) {
         lines.push_back(line);
         this->m_lig++;
-        this->m_col = (this->m_col < line.size() ? line.size() : this->m_col);
+        this->m_col = (this->m_col < (unsigned int)line.size() ? (unsigned int)line.size() : this->m_col);
     }
     this->m_field.resize(this->m_lig, std::vector<Square>(this->m_col));
 
@@ -20,10 +23,10 @@ Maze::Maze(const std::string& levelPath) {
             Square s;
             s.position = std::make_pair(i, j);
             if (j < lines[i].size()) {
+                // Correspondance entre caractères et éléments [cite: 39, 66]
                 s.sprite = (SpriteType)lines[i][j];
-                // Extraction de la position initiale du joueur [cite: 39, 96]
                 if (s.sprite == SpriteType::PLAYER || s.sprite == SpriteType::PLAYER_ON_GOAL) {
-                    this->m_playerPosition = std::make_pair(i, j);
+                    this->m_playerPosition = std::make_pair(i, j); // [cite: 75]
                     s.sprite = (s.sprite == SpriteType::PLAYER_ON_GOAL) ? SpriteType::GOAL : SpriteType::GROUND;
                 }
             } else {
@@ -32,11 +35,20 @@ Maze::Maze(const std::string& levelPath) {
             this->m_field[i][j] = s;
         }
     }
-    // Initialisation des cases mortes à la création du niveau [cite: 121]
+    // Initialisation des deadlocks statiques au chargement
     this->detectStaticDeadlocks();
+    this->cacheGoalPositions(); // cache buts
 }
 
-// Récupère l'ensemble des positions des caisses pour définir l'état (Node) [cite: 96]
+void Maze::cacheGoalPositions() { // opt: préc
+    m_goals.clear();
+    for (unsigned int i = 0; i < m_lig; ++i)
+        for (unsigned int j = 0; j < m_col; ++j)
+            if (m_field[i][j].sprite == SpriteType::GOAL)
+                m_goals.push_back({(int)i, (int)j});
+}
+
+// Récupère les positions des caisses pour définir l'état du Noeud [cite: 76, 96]
 std::set<std::pair<int, int>> Maze::getBoxesPositions() const {
     std::set<std::pair<int, int>> boxes;
     for (unsigned int i = 0; i < m_lig; ++i)
@@ -46,7 +58,7 @@ std::set<std::pair<int, int>> Maze::getBoxesPositions() const {
     return boxes;
 }
 
-// Met à jour la grille pour correspondre à un état donné (nœud) de l'arbre de recherche [cite: 95, 101]
+// Applique un état donné à la grille de jeu [cite: 95]
 void Maze::setGameState(const Node& n) {
     m_playerPosition = n.playerPos;
     for (unsigned int i = 0; i < m_lig; ++i) {
@@ -60,13 +72,13 @@ void Maze::setGameState(const Node& n) {
     }
 }
 
-// Détecte les coins où une caisse serait définitivement bloquée (Deadlocks) [cite: 119, 120]
+// Détection des deadlocks : cases où une caisse est bloquée sans but [cite: 119, 120]
 void Maze::detectStaticDeadlocks() {
     for (unsigned int i = 1; i < m_lig - 1; ++i) {
         for (unsigned int j = 1; j < m_col - 1; ++j) {
             if (m_field[i][j].sprite == SpriteType::GROUND) {
                 bool u = isWall({i-1, j}), d = isWall({i+1, j}), l = isWall({i, j-1}), r = isWall({i, j+1});
-                // Une case sol en coin sans objectif est une case morte [cite: 120]
+                // Si la case est un coin et n'est pas un objectif [cite: 120]
                 if (((u && l) || (u && r) || (d && l) || (d && r)) && !isGoal({i,j}))
                     m_field[i][j].isDeadlock = true;
             }
@@ -74,63 +86,71 @@ void Maze::detectStaticDeadlocks() {
     }
 }
 
-// Résolution par parcours en largeur pour garantir l'optimalité [cite: 106, 118]
-std::vector<char> Maze::solveBFS() {
-    std::queue<Node> q;
-    std::set<Node> visited;
+// Heuristique h(n) : Estimation du coût restant (Manhattan) [cite: 141, 142]
+double Maze::calculateHeuristic(const Node& n) { // opt: cache buts
+    double totalDist = 0;
+    for (const auto& boxPos : n.boxesPos) {
+        double minDist = 1e9;
+        for (const auto& goal : m_goals) { // boucle rapide
+            double d = std::abs(goal.first - boxPos.first) + std::abs(goal.second - boxPos.second);
+            if (d < minDist) minDist = d;
+        }
+        totalDist += minDist;
+    }
+    return totalDist;
+}
 
+// Vérifie si toutes les caisses sont sur un objectif [cite: 48, 49, 97]
+bool Maze::isSolution(const Node& n) const {
+    for (auto const& bPos : n.boxesPos) {
+        if (!isGoal(bPos)) return false;
+    }
+    return true;
+}
+
+// --- NIVEAU 1 : BFS & DFS [cite: 118] ---
+
+// Parcours en Largeur (BFS) : Garantit la solution optimale [cite: 106, 126]
+std::vector<char> Maze::solveBFS() { // opt: O(1)
+    std::cout << "--- Debut Resolution BFS ---" << std::endl;
+    std::queue<Node> q;
+    std::unordered_set<Node> visited; // O(1) lookup
     Node start = { m_playerPosition, getBoxesPositions(), {} };
     q.push(start);
     visited.insert(start);
 
     while (!q.empty()) {
         Node curr = q.front(); q.pop();
+        if (visited.size() % 1000 == 0) std::cout << "BFS - Noeuds visites : " << visited.size() << std::endl;
+        if (isSolution(curr)) return curr.path;
 
-        // Vérification de la condition de victoire [cite: 48, 97]
-        bool win = true;
-        for (auto const& bPos : curr.boxesPos) {
-            if (!isGoal(bPos)) { win = false; break; }
-        }
-        if (win) return curr.path;
-
-        // Exploration dans l'ordre : HAUT, BAS, GAUCHE, DROITE
+        // Ordre impose : HAUT/BAS/GAUCHE/DROITE [cite: 109]
         for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
-            std::pair<int, int> nextP = { curr.playerPos.first + neighbours[dir].first,
-                                          curr.playerPos.second + neighbours[dir].second };
-
+            std::pair<int, int> nextP = {curr.playerPos.first + neighbours[dir].first, curr.playerPos.second + neighbours[dir].second};
             if (isWall(nextP)) continue;
 
             Node nextNode = curr;
             nextNode.playerPos = nextP;
-
             if (curr.boxesPos.count(nextP)) {
-                std::pair<int, int> nextBoxP = { nextP.first + neighbours[dir].first,
-                                                 nextP.second + neighbours[dir].second };
-
-                // On ne peut pousser qu'une caisse et pas dans un mur/caisse [cite: 41, 46]
-                if (isWall(nextBoxP) || curr.boxesPos.count(nextBoxP)) continue;
-
-                // OPTIMISATION : Ignorer si la caisse arrive sur une case morte
-                if (m_field[nextBoxP.first][nextBoxP.second].isDeadlock) continue;
-
-                nextNode.boxesPos.erase(nextP);
-                nextNode.boxesPos.insert(nextBoxP);
+                std::pair<int, int> nBP = {nextP.first + neighbours[dir].first, nextP.second + neighbours[dir].second};
+                // Elagage si mur, caisse ou deadlock [cite: 41, 120]
+                if (isWall(nBP) || curr.boxesPos.count(nBP) || m_field[nBP.first][nBP.second].isDeadlock) continue;
+                nextNode.boxesPos.erase(nextP); nextNode.boxesPos.insert(nBP);
             }
-
-            if (visited.find(nextNode) == visited.end()) {
+            if (!visited.count(nextNode)) { // plus rapide
                 nextNode.path.push_back((char)dir);
-                visited.insert(nextNode);
-                q.push(nextNode);
+                visited.insert(nextNode); q.push(nextNode);
             }
         }
     }
     return {};
 }
 
-// Résolution par parcours en profondeur (non optimal) [cite: 118]
-std::vector<char> Maze::solveDFS() {
+// Parcours en Profondeur (DFS) [cite: 118]
+std::vector<char> Maze::solveDFS() { // opt: O(1)
+    std::cout << "--- Debut Resolution DFS ---" << std::endl;
     std::stack<Node> s;
-    std::set<Node> visited;
+    std::unordered_set<Node> visited; // O(1) lookup
     Node start = { m_playerPosition, getBoxesPositions(), {} };
     s.push(start);
 
@@ -138,34 +158,19 @@ std::vector<char> Maze::solveDFS() {
         Node curr = s.top(); s.pop();
         if (visited.count(curr)) continue;
         visited.insert(curr);
+        if (visited.size() % 1000 == 0) std::cout << "DFS - Noeuds visites : " << visited.size() << std::endl;
+        if (isSolution(curr)) return curr.path;
 
-        bool win = true;
-        for (auto const& bPos : curr.boxesPos) {
-            if (!isGoal(bPos)) { win = false; break; }
-        }
-        if (win) return curr.path;
-
-        // Ordre inverse pour la pile afin de traiter HAUT en premier
         for (int dir = DIRECTION_MAX - 1; dir >= 0; --dir) {
-            std::pair<int, int> nextP = { curr.playerPos.first + neighbours[dir].first,
-                                          curr.playerPos.second + neighbours[dir].second };
-
+            std::pair<int, int> nextP = {curr.playerPos.first + neighbours[dir].first, curr.playerPos.second + neighbours[dir].second};
             if (isWall(nextP)) continue;
-
-            Node nextNode = curr;
-            nextNode.playerPos = nextP;
-
+            Node nextNode = curr; nextNode.playerPos = nextP;
             if (curr.boxesPos.count(nextP)) {
-                std::pair<int, int> nextBoxP = { nextP.first + neighbours[dir].first,
-                                                 nextP.second + neighbours[dir].second };
-                if (isWall(nextBoxP) || curr.boxesPos.count(nextBoxP)) continue;
-                if (m_field[nextBoxP.first][nextBoxP.second].isDeadlock) continue;
-
-                nextNode.boxesPos.erase(nextP);
-                nextNode.boxesPos.insert(nextBoxP);
+                std::pair<int, int> nBP = {nextP.first + neighbours[dir].first, nextP.second + neighbours[dir].second};
+                if (isWall(nBP) || curr.boxesPos.count(nBP) || m_field[nBP.first][nBP.second].isDeadlock) continue;
+                nextNode.boxesPos.erase(nextP); nextNode.boxesPos.insert(nBP);
             }
-
-            if (visited.find(nextNode) == visited.end()) {
+            if (!visited.count(nextNode)) {
                 nextNode.path.push_back((char)dir);
                 s.push(nextNode);
             }
@@ -174,44 +179,107 @@ std::vector<char> Maze::solveDFS() {
     return {};
 }
 
-// Fonctions de vérification d'état [cite: 39]
-bool Maze::isWall(const std::pair<int, int>& p) const { return m_field[p.first][p.second].sprite == SpriteType::WALL; }
-bool Maze::isBox(const std::pair<int, int>& p) const { return m_field[p.first][p.second].sprite == SpriteType::BOX || m_field[p.first][p.second].sprite == SpriteType::BOX_PLACED; }
-bool Maze::isGoal(const std::pair<int, int>& p) const { return m_field[p.first][p.second].sprite == SpriteType::GOAL || m_field[p.first][p.second].sprite == SpriteType::BOX_PLACED; }
-bool Maze::isFree(const std::pair<int, int>& p) const { return m_field[p.first][p.second].sprite == SpriteType::GROUND || m_field[p.first][p.second].sprite == SpriteType::GOAL; }
+// --- NIVEAU 2 : BEST FIRST & ASTAR [cite: 147, 150] ---
 
-// Un niveau est résolu si aucune caisse n'est hors d'un objectif [cite: 48, 49]
-bool Maze::isSolution() const {
-    for (auto const& row : m_field)
-        for (auto const& sq : row)
-            if (sq.sprite == SpriteType::BOX) return false;
-    return true;
+// Greedy Best First Search [cite: 147]
+std::vector<char> Maze::solveBestFirst() { // opt: O(1)
+    std::cout << "--- Debut Resolution Best-First ---" << std::endl;
+    std::priority_queue<PriorityNode, std::vector<PriorityNode>, std::greater<PriorityNode>> pq;
+    std::unordered_set<Node> visited; // O(1) lookup
+    Node start = { m_playerPosition, getBoxesPositions(), {} };
+    pq.push({start, calculateHeuristic(start)});
+
+    while (!pq.empty()) {
+        Node curr = pq.top().node; pq.pop();
+        if (visited.count(curr)) continue;
+        visited.insert(curr);
+        if (visited.size() % 1000 == 0) std::cout << "Best-First - Noeuds : " << visited.size() << std::endl;
+        if (isSolution(curr)) return curr.path;
+
+        for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
+            std::pair<int, int> nextP = {curr.playerPos.first + neighbours[dir].first, curr.playerPos.second + neighbours[dir].second};
+            if (isWall(nextP)) continue;
+            Node nextNode = curr; nextNode.playerPos = nextP;
+            if (curr.boxesPos.count(nextP)) {
+                std::pair<int, int> nBP = {nextP.first + neighbours[dir].first, nextP.second + neighbours[dir].second};
+                if (isWall(nBP) || curr.boxesPos.count(nBP) || m_field[nBP.first][nBP.second].isDeadlock) continue;
+                nextNode.boxesPos.erase(nextP); nextNode.boxesPos.insert(nBP);
+            }
+            if (!visited.count(nextNode)) {
+                nextNode.path.push_back((char)dir);
+                pq.push({nextNode, calculateHeuristic(nextNode)});
+            }
+        }
+    }
+    return {};
 }
 
-// Logique de poussée pour le mode manuel [cite: 45, 46]
+// A* (A-Star) : f(n) = g(n) + h(n) [cite: 150]
+std::vector<char> Maze::solveAStar() { // opt: O(1)
+    std::cout << "--- Debut Resolution A* ---" << std::endl;
+    std::priority_queue<PriorityNode, std::vector<PriorityNode>, std::greater<PriorityNode>> pq;
+    std::unordered_set<Node> visited; // O(1) lookup
+    Node start = { m_playerPosition, getBoxesPositions(), {} };
+    pq.push({start, calculateHeuristic(start)});
+
+    while (!pq.empty()) {
+        Node curr = pq.top().node; pq.pop();
+        if (visited.count(curr)) continue;
+        visited.insert(curr);
+        if (visited.size() % 1000 == 0) std::cout << "A* - Noeuds : " << visited.size() << std::endl;
+        if (isSolution(curr)) return curr.path;
+
+        for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
+            std::pair<int, int> nextP = {curr.playerPos.first + neighbours[dir].first, curr.playerPos.second + neighbours[dir].second};
+            if (isWall(nextP)) continue;
+            Node nextNode = curr; nextNode.playerPos = nextP;
+            if (curr.boxesPos.count(nextP)) {
+                std::pair<int, int> nBP = {nextP.first + neighbours[dir].first, nextP.second + neighbours[dir].second};
+                if (isWall(nBP) || curr.boxesPos.count(nBP) || m_field[nBP.first][nBP.second].isDeadlock) continue;
+                nextNode.boxesPos.erase(nextP); nextNode.boxesPos.insert(nBP);
+            }
+            if (!visited.count(nextNode)) {
+                nextNode.path.push_back((char)dir);
+                double g = (double)nextNode.path.size(); // Profondeur g(n) [cite: 150]
+                double h = calculateHeuristic(nextNode); // Heuristique h(n) [cite: 150]
+                pq.push({nextNode, g + h});
+            }
+        }
+    }
+    return {};
+}
+
+// --- LOGIQUE DE JEU DE BASE [cite: 60, 63] ---
+
+bool Maze::isWall(const std::pair<int, int>& p) const { return m_field[p.first][p.second].sprite == SpriteType::WALL; }
+bool Maze::isGoal(const std::pair<int, int>& p) const { return m_field[p.first][p.second].sprite == SpriteType::GOAL || m_field[p.first][p.second].sprite == SpriteType::BOX_PLACED; }
+
+// Methode pour pousser une caisse (interdit de tirer) [cite: 45, 80]
 bool Maze::pushBox(const std::pair<int, int>& p, char dir) {
     auto nP = std::make_pair(p.first + neighbours[dir].first, p.second + neighbours[dir].second);
-    if (isWall(nP) || isBox(nP)) return false;
+    if (isWall(nP) || (m_field[nP.first][nP.second].sprite == SpriteType::BOX || m_field[nP.first][nP.second].sprite == SpriteType::BOX_PLACED)) return false;
     m_field[p.first][p.second].sprite = (m_field[p.first][p.second].sprite == SpriteType::BOX_PLACED) ? SpriteType::GOAL : SpriteType::GROUND;
     m_field[nP.first][nP.second].sprite = (isGoal(nP)) ? SpriteType::BOX_PLACED : SpriteType::BOX;
     return true;
 }
 
-// Déplacement du joueur et gestion des collisions [cite: 40, 67]
+// Methode pour deplacer le joueur [cite: 67, 80]
 bool Maze::updatePlayer(char dir) {
     auto nP = std::make_pair(m_playerPosition.first + neighbours[dir].first, m_playerPosition.second + neighbours[dir].second);
     if (isWall(nP)) return false;
-    if (isBox(nP)) { if (!pushBox(nP, dir)) return false; }
+    if (m_field[nP.first][nP.second].sprite == SpriteType::BOX || m_field[nP.first][nP.second].sprite == SpriteType::BOX_PLACED) {
+        if (!pushBox(nP, dir)) return false; // Pousse une seule caisse [cite: 46]
+    }
     m_playerPosition = nP; m_playerDirection = dir;
     return true;
 }
 
-// Affichage graphique incluant les cases mortes en rouge [cite: 81, 121]
+// Affichage graphique [cite: 81]
 void Maze::draw(GraphicAllegro5& g) const {
     for (unsigned int i = 0; i < m_field.size(); ++i) {
         for (unsigned int j = 0; j < m_field[i].size(); ++j) {
             const auto s = m_field[i][j];
-            if (s.isDeadlock) g.drawRect(j, i, j+1, i+1, COLOR_RED, 1);
+            if (s.isDeadlock) g.drawRect(j, i, j+1, i+1, COLOR_RED, 1); // Deadlocks en rouge
             if (s.sprite == SpriteType::WALL) g.drawT(g.getSprite(BITMAP_WALL), j, i);
             else if (s.sprite == SpriteType::BOX_PLACED) g.drawT(g.getSprite(BITMAP_BOX_PLACED), j, i);
             else if (s.sprite == SpriteType::BOX) g.drawT(g.getSprite(BITMAP_BOX), j, i);
@@ -221,11 +289,11 @@ void Maze::draw(GraphicAllegro5& g) const {
     g.drawT(g.getSpritePlayer(m_playerDirection), m_playerPosition.second, m_playerPosition.first);
 }
 
-// Rejoue la séquence de touches trouvée par l'algorithme [cite: 68]
+// Animation de la solution trouvee
 void Maze::playSolution(GraphicAllegro5& g, const std::vector<char>& sol) {
     for (const auto& m : sol) {
         this->updatePlayer(m);
         g.clear(); this->draw(g); g.display();
-        al_rest(0.1); // Petite pause pour la visualisation
+        al_rest(0.1);
     }
 }
