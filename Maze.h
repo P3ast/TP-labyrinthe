@@ -43,15 +43,12 @@ struct LightNode {
     bool operator==(const LightNode& other) const {
         return playerPos == other.playerPos && boxesPos == other.boxesPos;
     }
+    
+    bool operator<(const LightNode& other) const { // pour std::set
+        if (playerPos != other.playerPos) return playerPos < other.playerPos;
+        return boxesPos < other.boxesPos;
+    }
 };
-
-namespace std { // hash optimisé léger
-    template<> struct hash<LightNode> {
-        size_t operator()(const LightNode& n) const {
-            return hash<int>()(n.playerPos.first) ^ (hash<int>()(n.playerPos.second) << 1);
-        }
-    };
-}
 
 // Structure pour A* et Best-First (Greedy)
 struct PriorityNode {

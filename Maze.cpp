@@ -128,12 +128,13 @@ bool Maze::isSolution(const Node& n) const {
 std::vector<char> Maze::solveBFS() { // opt: vec+vec
     std::cout << "--- Debut Resolution BFS ---" << std::endl;
     std::queue<LightNode> q;
-    std::unordered_set<LightNode> visited; // O(1)
+    std::set<LightNode> visited; // set au lieu de unordered_set
     
     LightNode start;
     start.playerPos = m_playerPosition;
     auto bpos = getBoxesPositions();
     start.boxesPos.assign(bpos.begin(), bpos.end());
+    start.path.clear();
     start.depth = 0;
     
     q.push(start);
@@ -184,12 +185,13 @@ std::vector<char> Maze::solveBFS() { // opt: vec+vec
 std::vector<char> Maze::solveDFS() { // opt: vec+vec
     std::cout << "--- Debut Resolution DFS ---" << std::endl;
     std::stack<LightNode> s;
-    std::unordered_set<LightNode> visited; // O(1)
+    std::set<LightNode> visited; // set au lieu de unordered_set
     
     LightNode start;
     start.playerPos = m_playerPosition;
     auto bpos = getBoxesPositions();
     start.boxesPos.assign(bpos.begin(), bpos.end());
+    start.path.clear();
     start.depth = 0;
     
     s.push(start);
