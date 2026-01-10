@@ -5,6 +5,7 @@
 #include <stack>
 #include <cmath>
 #include <algorithm>
+#include <utility>
 
 // Constructeur : Charge le niveau et initialise la matrice 2D [cite: 64, 65, 78]
 Maze::Maze(const std::string& levelPath) {
@@ -36,9 +37,9 @@ Maze::Maze(const std::string& levelPath) {
         }
     }
     // Initialisation des deadlocks statiques au chargement
+    this->buildWallCache(); // cache murs (doit être avant detectDeadlocks!)
     this->detectStaticDeadlocks();
     this->cacheGoalPositions(); // cache buts
-    this->buildWallCache(); // cache murs
 }
 
 void Maze::buildWallCache() { // opt: acces O(1) murs
@@ -172,7 +173,7 @@ std::vector<char> Maze::solveBFS() { // opt: vec+vec
             
             if (!visited.count(nextNode)) {
                 visited.insert(nextNode);
-                q.push(std::move(nextNode)); // move
+                q.push(nextNode);
             }
         }
     }
