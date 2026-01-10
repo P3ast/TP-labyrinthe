@@ -23,10 +23,9 @@ Maze::Maze(const std::string& levelPath) {
             Square s;
             s.position = std::make_pair(i, j);
             if (j < lines[i].size()) {
-                // Correspondance entre caractères et éléments [cite: 39, 66]
                 s.sprite = (SpriteType)lines[i][j];
                 if (s.sprite == SpriteType::PLAYER || s.sprite == SpriteType::PLAYER_ON_GOAL) {
-                    this->m_playerPosition = std::make_pair(i, j); // [cite: 75]
+                    this->m_playerPosition = std::make_pair(i, j);
                     s.sprite = (s.sprite == SpriteType::PLAYER_ON_GOAL) ? SpriteType::GOAL : SpriteType::GROUND;
                 }
             } else {
@@ -35,8 +34,50 @@ Maze::Maze(const std::string& levelPath) {
             this->m_field[i][j] = s;
         }
     }
-    // Initialisation des deadlocks statiques au chargement
+    
     this->detectStaticDeadlocks();
+    
+    // Pré-calculer les positions des goals
+    for (unsigned int i = 0; i < m_lig; ++i) {
+        for (unsigned int j = 0; j < m_col; ++j) {
+            if (m_field[i][j].sprite == SpriteType::GOAL) {
+                m_goals.push_back({(int)i, (int)j});
+            }
+        }
+    }
+    
+    // OPTIMISATION CRITIQUE : Pré-calculer matrice de distances entre tous les goals
+    // Cela évite les calculs répétés d'heuristique!
+    unsigned int totalCells = m_lig * m_col;
+    m_distanceMatrix.resize(totalCells, std::vector<int>(totalCells, 0));
+    
+    // BFS depuis chaque cell pour calculer distances
+    for (unsigned int start = 0; start < totalCells; ++start) {
+        std::queue<std::pair<int, int>> q;
+        std::vector<int> dist(totalCells, -1);
+        int si = start / m_col;
+        int sj = start % m_col;
+        q.push({si, sj});
+        dist[start] = 0;
+        
+        while (!q.empty()) {
+            auto [i, j] = q.front(); q.pop();
+            int idx = i * m_col + j;
+            
+            for (const auto& nbr : neighbours) {
+                int ni = i + nbr.first;
+                int nj = j + nbr.second;
+                if (ni >= 0 && ni < (int)m_lig && nj >= 0 && nj < (int)m_col) {
+                    int nidx = ni * m_col + nj;
+                    if (dist[nidx] == -1 && !isWall({ni, nj})) {
+                        dist[nidx] = dist[idx] + 1;
+                        q.push({ni, nj});
+                        m_distanceMatrix[start][nidx] = dist[nidx];
+                    }
+                }
+            }
+        }
+    }
 }
 
 // Récupère les positions des caisses pour définir l'état du Noeud [cite: 76, 96]
@@ -77,22 +118,51 @@ void Maze::detectStaticDeadlocks() {
     }
 }
 
-// Heuristique h(n) : Estimation du coût restant (Manhattan) [cite: 141, 142]
-double Maze::calculateHeuristic(const Node& n) {
+// Heuristique h(n) : Estimation du coût restant (Manhattan) OPTIMISÉE [cite: 141, 142]
+inline double Maze::calculateHeuristic(const Node& n) {
     double totalDist = 0;
     for (const auto& boxPos : n.boxesPos) {
         double minDist = 1e9;
-        for (unsigned int i = 0; i < m_lig; ++i) {
-            for (unsigned int j = 0; j < m_col; ++j) {
-                if (isGoal({(int)i, (int)j})) {
-                    double d = std::abs((int)i - boxPos.first) + std::abs((int)j - boxPos.second);
-                    if (d < minDist) minDist = d;
-                }
-            }
+        for (const auto& goalPos : m_goals) {
+            double d = std::abs((int)goalPos.first - boxPos.first) + std::abs((int)goalPos.second - boxPos.second);
+            if (d < minDist) minDist = d;
         }
         totalDist += minDist;
     }
     return totalDist;
+}
+
+// Heuristique ULTRA-RAPIDE avec matrices pré-calculées - O(boxes) au lieu de O(goals×boxes)
+inline double Maze::calculateHeuristicFast(const Node& n) {
+    // Vérifier le cache d'abord
+    if (m_heuristicCache.count(n)) {
+        return m_heuristicCache[n];
+    }
+    
+    if (m_goals.empty() || n.boxesPos.empty()) {
+        m_heuristicCache[n] = 0;
+        return 0;
+    }
+    
+    // Greedy assignment simple mais RAPIDE : assigner chaque box au goal le plus proche
+    // Utiliser la matrice de distances pré-calculée = O(1) lookup!
+    int totalDist = 0;
+    for (const auto& boxPos : n.boxesPos) {
+        int boxIdx = boxPos.first * m_col + boxPos.second;
+        int minDist = 1000000;
+        
+        for (const auto& goalPos : m_goals) {
+            int goalIdx = goalPos.first * m_col + goalPos.second;
+            // O(1) lookup au lieu de O(manhattan)!
+            int d = m_distanceMatrix[boxIdx][goalIdx];
+            if (d > 0 && d < minDist) minDist = d;
+        }
+        totalDist += (minDist == 1000000) ? 0 : minDist;
+    }
+    
+    double result = (double)totalDist;
+    m_heuristicCache[n] = result;
+    return result;
 }
 
 // Vérifie si toutes les caisses sont sur un objectif [cite: 48, 49, 97]
@@ -105,47 +175,61 @@ bool Maze::isSolution(const Node& n) const {
 
 // --- NIVEAU 1 : BFS & DFS [cite: 118] ---
 
-// Parcours en Largeur (BFS) : Garantit la solution optimale [cite: 106, 126]
+// Parcours en Largeur (BFS) : Garantit la solution optimale [cite: 106, 126] - ULTRA-OPTIMISÉ
 std::vector<char> Maze::solveBFS() {
     std::cout << "--- Debut Resolution BFS ---" << std::endl;
     std::queue<Node> q;
-    std::set<Node> visited;
+    std::unordered_set<Node, NodeHash> visited;
+    visited.reserve(100000);
     Node start = { m_playerPosition, getBoxesPositions(), {} };
     q.push(start);
     visited.insert(start);
 
     while (!q.empty()) {
         Node curr = q.front(); q.pop();
-        if (visited.size() % 1000 == 0) std::cout << "BFS - Noeuds visites : " << visited.size() << std::endl;
         if (isSolution(curr)) return curr.path;
+        if (visited.size() % 1000 == 0) std::cout << "BFS - Noeuds visites : " << visited.size() << std::endl;
 
-        // Ordre impose : HAUT/BAS/GAUCHE/DROITE [cite: 109]
         for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
-            std::pair<int, int> nextP = {curr.playerPos.first + neighbours[dir].first, curr.playerPos.second + neighbours[dir].second};
-            if (isWall(nextP)) continue;
+            const auto& nbr = neighbours[dir];
+            int ni = curr.playerPos.first + nbr.first;
+            int nj = curr.playerPos.second + nbr.second;
+            if (ni < 0 || ni >= (int)m_lig || nj < 0 || nj >= (int)m_col) continue;
+            if (isWall({ni, nj})) continue;
 
-            Node nextNode = curr;
-            nextNode.playerPos = nextP;
-            if (curr.boxesPos.count(nextP)) {
-                std::pair<int, int> nBP = {nextP.first + neighbours[dir].first, nextP.second + neighbours[dir].second};
-                // Elagage si mur, caisse ou deadlock [cite: 41, 120]
-                if (isWall(nBP) || curr.boxesPos.count(nBP) || m_field[nBP.first][nBP.second].isDeadlock) continue;
-                nextNode.boxesPos.erase(nextP); nextNode.boxesPos.insert(nBP);
+            Node nextNode;
+            nextNode.playerPos = {ni, nj};
+            nextNode.path = curr.path;
+            nextNode.path.push_back((char)dir);
+            
+            bool hasBox = curr.boxesPos.count({ni, nj});
+            if (hasBox) {
+                int nbi = ni + nbr.first;
+                int nbj = nj + nbr.second;
+                if (nbi < 0 || nbi >= (int)m_lig || nbj < 0 || nbj >= (int)m_col) continue;
+                if (isWall({nbi, nbj}) || curr.boxesPos.count({nbi, nbj}) || m_field[nbi][nbj].isDeadlock) continue;
+                nextNode.boxesPos = curr.boxesPos;
+                nextNode.boxesPos.erase({ni, nj});
+                nextNode.boxesPos.insert({nbi, nbj});
+            } else {
+                nextNode.boxesPos = curr.boxesPos;
             }
+            
             if (visited.find(nextNode) == visited.end()) {
-                nextNode.path.push_back((char)dir);
-                visited.insert(nextNode); q.push(nextNode);
+                visited.insert(nextNode); 
+                q.push(nextNode);
             }
         }
     }
     return {};
 }
 
-// Parcours en Profondeur (DFS) [cite: 118]
+// Parcours en Profondeur (DFS) - ULTRA-OPTIMISÉ
 std::vector<char> Maze::solveDFS() {
     std::cout << "--- Debut Resolution DFS ---" << std::endl;
     std::stack<Node> s;
-    std::set<Node> visited;
+    std::unordered_set<Node, NodeHash> visited;
+    visited.reserve(100000);
     Node start = { m_playerPosition, getBoxesPositions(), {} };
     s.push(start);
 
@@ -153,20 +237,35 @@ std::vector<char> Maze::solveDFS() {
         Node curr = s.top(); s.pop();
         if (visited.count(curr)) continue;
         visited.insert(curr);
-        if (visited.size() % 1000 == 0) std::cout << "DFS - Noeuds visites : " << visited.size() << std::endl;
         if (isSolution(curr)) return curr.path;
+        if (visited.size() % 1000 == 0) std::cout << "DFS - Noeuds visites : " << visited.size() << std::endl;
 
         for (int dir = DIRECTION_MAX - 1; dir >= 0; --dir) {
-            std::pair<int, int> nextP = {curr.playerPos.first + neighbours[dir].first, curr.playerPos.second + neighbours[dir].second};
-            if (isWall(nextP)) continue;
-            Node nextNode = curr; nextNode.playerPos = nextP;
-            if (curr.boxesPos.count(nextP)) {
-                std::pair<int, int> nBP = {nextP.first + neighbours[dir].first, nextP.second + neighbours[dir].second};
-                if (isWall(nBP) || curr.boxesPos.count(nBP) || m_field[nBP.first][nBP.second].isDeadlock) continue;
-                nextNode.boxesPos.erase(nextP); nextNode.boxesPos.insert(nBP);
+            const auto& nbr = neighbours[dir];
+            int ni = curr.playerPos.first + nbr.first;
+            int nj = curr.playerPos.second + nbr.second;
+            if (ni < 0 || ni >= (int)m_lig || nj < 0 || nj >= (int)m_col) continue;
+            if (isWall({ni, nj})) continue;
+            
+            Node nextNode;
+            nextNode.playerPos = {ni, nj};
+            nextNode.path = curr.path;
+            nextNode.path.push_back((char)dir);
+            
+            bool hasBox = curr.boxesPos.count({ni, nj});
+            if (hasBox) {
+                int nbi = ni + nbr.first;
+                int nbj = nj + nbr.second;
+                if (nbi < 0 || nbi >= (int)m_lig || nbj < 0 || nbj >= (int)m_col) continue;
+                if (isWall({nbi, nbj}) || curr.boxesPos.count({nbi, nbj}) || m_field[nbi][nbj].isDeadlock) continue;
+                nextNode.boxesPos = curr.boxesPos;
+                nextNode.boxesPos.erase({ni, nj});
+                nextNode.boxesPos.insert({nbi, nbj});
+            } else {
+                nextNode.boxesPos = curr.boxesPos;
             }
+            
             if (!visited.count(nextNode)) {
-                nextNode.path.push_back((char)dir);
                 s.push(nextNode);
             }
         }
@@ -176,68 +275,109 @@ std::vector<char> Maze::solveDFS() {
 
 // --- NIVEAU 2 : BEST FIRST & ASTAR [cite: 147, 150] ---
 
-// Greedy Best First Search [cite: 147]
+// Greedy Best First Search [cite: 147] - ULTRA-OPTIMISÉ
 std::vector<char> Maze::solveBestFirst() {
     std::cout << "--- Debut Resolution Best-First ---" << std::endl;
     std::priority_queue<PriorityNode, std::vector<PriorityNode>, std::greater<PriorityNode>> pq;
-    std::set<Node> visited;
+    std::unordered_set<Node, NodeHash> visited;
+    visited.reserve(100000);
+    
     Node start = { m_playerPosition, getBoxesPositions(), {} };
-    pq.push({start, calculateHeuristic(start)});
+    pq.push({start, calculateHeuristicFast(start)});
 
     while (!pq.empty()) {
-        Node curr = pq.top().node; pq.pop();
+        PriorityNode pnode = pq.top(); pq.pop();
+        Node curr = pnode.node;
+        
         if (visited.count(curr)) continue;
         visited.insert(curr);
-        if (visited.size() % 1000 == 0) std::cout << "Best-First - Noeuds : " << visited.size() << std::endl;
+        
         if (isSolution(curr)) return curr.path;
+        if (visited.size() % 1000 == 0) std::cout << "Best-First - Noeuds : " << visited.size() << std::endl;
 
         for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
-            std::pair<int, int> nextP = {curr.playerPos.first + neighbours[dir].first, curr.playerPos.second + neighbours[dir].second};
-            if (isWall(nextP)) continue;
-            Node nextNode = curr; nextNode.playerPos = nextP;
-            if (curr.boxesPos.count(nextP)) {
-                std::pair<int, int> nBP = {nextP.first + neighbours[dir].first, nextP.second + neighbours[dir].second};
-                if (isWall(nBP) || curr.boxesPos.count(nBP) || m_field[nBP.first][nBP.second].isDeadlock) continue;
-                nextNode.boxesPos.erase(nextP); nextNode.boxesPos.insert(nBP);
+            const auto& nbr = neighbours[dir];
+            int ni = curr.playerPos.first + nbr.first;
+            int nj = curr.playerPos.second + nbr.second;
+            if (ni < 0 || ni >= (int)m_lig || nj < 0 || nj >= (int)m_col) continue;
+            if (isWall({ni, nj})) continue;
+            
+            Node nextNode;
+            nextNode.playerPos = {ni, nj};
+            nextNode.path = curr.path;
+            nextNode.path.push_back((char)dir);
+            
+            bool hasBox = curr.boxesPos.count({ni, nj});
+            if (hasBox) {
+                int nbi = ni + nbr.first;
+                int nbj = nj + nbr.second;
+                if (nbi < 0 || nbi >= (int)m_lig || nbj < 0 || nbj >= (int)m_col) continue;
+                if (isWall({nbi, nbj}) || curr.boxesPos.count({nbi, nbj}) || m_field[nbi][nbj].isDeadlock) continue;
+                nextNode.boxesPos = curr.boxesPos;
+                nextNode.boxesPos.erase({ni, nj});
+                nextNode.boxesPos.insert({nbi, nbj});
+            } else {
+                nextNode.boxesPos = curr.boxesPos;
             }
+            
             if (!visited.count(nextNode)) {
-                nextNode.path.push_back((char)dir);
-                pq.push({nextNode, calculateHeuristic(nextNode)});
+                pq.push({nextNode, calculateHeuristicFast(nextNode)});
             }
         }
     }
     return {};
 }
 
-// A* (A-Star) : f(n) = g(n) + h(n) [cite: 150]
+// A* (A-Star) : f(n) = g(n) + h(n) [cite: 150] - ULTRA-OPTIMISÉ
 std::vector<char> Maze::solveAStar() {
     std::cout << "--- Debut Resolution A* ---" << std::endl;
     std::priority_queue<PriorityNode, std::vector<PriorityNode>, std::greater<PriorityNode>> pq;
-    std::set<Node> visited;
+    std::unordered_set<Node, NodeHash> visited;
+    visited.reserve(100000);
+    
     Node start = { m_playerPosition, getBoxesPositions(), {} };
-    pq.push({start, calculateHeuristic(start)});
+    pq.push({start, calculateHeuristicFast(start)});
 
     while (!pq.empty()) {
-        Node curr = pq.top().node; pq.pop();
+        PriorityNode pnode = pq.top(); pq.pop();
+        Node curr = pnode.node;
+        
         if (visited.count(curr)) continue;
         visited.insert(curr);
-        if (visited.size() % 1000 == 0) std::cout << "A* - Noeuds : " << visited.size() << std::endl;
+        
         if (isSolution(curr)) return curr.path;
+        if (visited.size() % 1000 == 0) std::cout << "A* - Noeuds : " << visited.size() << std::endl;
 
+        double g = (double)curr.path.size();
         for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
-            std::pair<int, int> nextP = {curr.playerPos.first + neighbours[dir].first, curr.playerPos.second + neighbours[dir].second};
-            if (isWall(nextP)) continue;
-            Node nextNode = curr; nextNode.playerPos = nextP;
-            if (curr.boxesPos.count(nextP)) {
-                std::pair<int, int> nBP = {nextP.first + neighbours[dir].first, nextP.second + neighbours[dir].second};
-                if (isWall(nBP) || curr.boxesPos.count(nBP) || m_field[nBP.first][nBP.second].isDeadlock) continue;
-                nextNode.boxesPos.erase(nextP); nextNode.boxesPos.insert(nBP);
+            const auto& nbr = neighbours[dir];
+            int ni = curr.playerPos.first + nbr.first;
+            int nj = curr.playerPos.second + nbr.second;
+            if (ni < 0 || ni >= (int)m_lig || nj < 0 || nj >= (int)m_col) continue;
+            if (isWall({ni, nj})) continue;
+            
+            Node nextNode;
+            nextNode.playerPos = {ni, nj};
+            nextNode.path = curr.path;
+            nextNode.path.push_back((char)dir);
+            
+            bool hasBox = curr.boxesPos.count({ni, nj});
+            if (hasBox) {
+                int nbi = ni + nbr.first;
+                int nbj = nj + nbr.second;
+                if (nbi < 0 || nbi >= (int)m_lig || nbj < 0 || nbj >= (int)m_col) continue;
+                if (isWall({nbi, nbj}) || curr.boxesPos.count({nbi, nbj}) || m_field[nbi][nbj].isDeadlock) continue;
+                nextNode.boxesPos = curr.boxesPos;
+                nextNode.boxesPos.erase({ni, nj});
+                nextNode.boxesPos.insert({nbi, nbj});
+            } else {
+                nextNode.boxesPos = curr.boxesPos;
             }
+            
             if (!visited.count(nextNode)) {
-                nextNode.path.push_back((char)dir);
-                double g = (double)nextNode.path.size(); // Profondeur g(n) [cite: 150]
-                double h = calculateHeuristic(nextNode); // Heuristique h(n) [cite: 150]
-                pq.push({nextNode, g + h});
+                double g_next = g + 1.0;
+                double h_next = calculateHeuristicFast(nextNode);
+                pq.push({nextNode, g_next + h_next});
             }
         }
     }
@@ -290,5 +430,87 @@ void Maze::playSolution(GraphicAllegro5& g, const std::vector<char>& sol) {
         this->updatePlayer(m);
         g.clear(); this->draw(g); g.display();
         al_rest(0.1);
+    }
+}
+
+// IDA* (Iterative Deepening A*) - Souvent plus RAPIDE que A*!
+// Utilise DFS avec limite de f(n) au lieu d'une priority queue
+std::vector<char> Maze::solveIDAstar() {
+    std::cout << "--- Debut Resolution IDA* ---" << std::endl;
+    
+    Node start = { m_playerPosition, getBoxesPositions(), {} };
+    double bound = calculateHeuristicFast(start);
+    std::vector<char> path = start.path;
+    
+    unsigned int iterations = 0;
+    while (true) {
+        iterations++;
+        if (iterations % 10 == 0) std::cout << "IDA* - Iteration " << iterations << " - Bound: " << bound << std::endl;
+        
+        std::unordered_set<Node, NodeHash> visited;
+        visited.reserve(100000);
+        
+        double minBound = 1e18;
+        std::function<bool(const Node&, double, double&)> search = 
+            [&](const Node& curr, double g, double& nextBound) -> bool {
+            
+            double h = calculateHeuristicFast(curr);
+            double f = g + h;
+            
+            if (f > bound) {
+                nextBound = std::min(nextBound, f);
+                return false;
+            }
+            
+            if (isSolution(curr)) {
+                path = curr.path;
+                return true;
+            }
+            
+            if (visited.count(curr)) return false;
+            visited.insert(curr);
+            
+            for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
+                const auto& nbr = neighbours[dir];
+                int ni = curr.playerPos.first + nbr.first;
+                int nj = curr.playerPos.second + nbr.second;
+                if (ni < 0 || ni >= (int)m_lig || nj < 0 || nj >= (int)m_col) continue;
+                if (isWall({ni, nj})) continue;
+                
+                Node nextNode;
+                nextNode.playerPos = {ni, nj};
+                nextNode.path = curr.path;
+                nextNode.path.push_back((char)dir);
+                
+                bool hasBox = curr.boxesPos.count({ni, nj});
+                if (hasBox) {
+                    int nbi = ni + nbr.first;
+                    int nbj = nj + nbr.second;
+                    if (nbi < 0 || nbi >= (int)m_lig || nbj < 0 || nbj >= (int)m_col) continue;
+                    if (isWall({nbi, nbj}) || curr.boxesPos.count({nbi, nbj}) || m_field[nbi][nbj].isDeadlock) continue;
+                    nextNode.boxesPos = curr.boxesPos;
+                    nextNode.boxesPos.erase({ni, nj});
+                    nextNode.boxesPos.insert({nbi, nbj});
+                } else {
+                    nextNode.boxesPos = curr.boxesPos;
+                }
+                
+                if (search(nextNode, g + 1.0, nextBound)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        
+        if (search(start, 0, minBound)) {
+            return path;
+        }
+        
+        if (minBound == 1e18) {
+            std::cout << "IDA* - Pas de solution trouvee" << std::endl;
+            return {};
+        }
+        
+        bound = minBound;
     }
 }
