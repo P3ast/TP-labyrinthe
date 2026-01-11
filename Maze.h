@@ -3,149 +3,118 @@
 
 #include <string>
 #include <vector>
-#include <set>
 #include <queue>
-#include <stack>
 #include <unordered_set>
-#include <functional>
 #include <unordered_map>
+#include <algorithm>
+#include <array>
 #include "GraphicAllegro5.h"
 
-// ========== ENUMS & TYPES ==========
+#define MAX_BOXES 32
 
-// Type d'élément dans le labyrinthe (utilise les caractères comme valeurs)
 enum class SpriteType : unsigned char {
-    GROUND = ' ',      // Espace vide accessible
-    OUTSIDE = 'X',     // Limite extérieure (non utilisé)
-    WALL = '#',        // Mur infranchissable
-    PLAYER = '@',      // Position initiale du joueur
-    PLAYER_ON_GOAL = '+', // Joueur sur un objectif
-    BOX = '$',         // Caisse à pousser
-    BOX_PLACED = '*',  // Caisse sur un objectif
-    GOAL = '.'         // Objectif (destination des caisses)
+    GROUND = ' ', OUTSIDE = 'X', WALL = '#',
+    PLAYER = '@', PLAYER_ON_GOAL = '+',
+    BOX = '$', BOX_PLACED = '*', GOAL = '.'
 };
 
-// ========== STRUCTURES DE DONNÉES ==========
-
-// État du problème Sokoban: position du joueur + positions des caisses + chemin suivi
+// --- NODE OPTIMISÉ ---
 struct Node {
-    std::pair<int, int> playerPos;              // Position (ligne, colonne) du joueur
-    std::set<std::pair<int, int>> boxesPos;     // Ensemble des positions de toutes les caisses
-    std::vector<char> path;                      // Chemin suivi pour atteindre cet état (directions: 0,1,2,3)
+    short playerPos;              // Position canonique (plus petit index accessible)
+    unsigned char boxCount;       // Nombre de caisses
+    std::array<short, MAX_BOXES> boxesPos; // Positions triées
+
+    // Pour DFS, on stocke le chemin des POUSSÉES directement
+    std::vector<int> pushPath;
 
     bool operator<(const Node& other) const {
         if (playerPos != other.playerPos) return playerPos < other.playerPos;
-        return boxesPos < other.boxesPos;
+        for(int i=0; i<boxCount; ++i) {
+            if (boxesPos[i] != other.boxesPos[i]) return boxesPos[i] < other.boxesPos[i];
+        }
+        return false;
     }
-
     bool operator==(const Node& other) const {
-        return playerPos == other.playerPos && boxesPos == other.boxesPos;
+        if (playerPos != other.playerPos) return false;
+        for(int i=0; i<boxCount; ++i) {
+            if (boxesPos[i] != other.boxesPos[i]) return false;
+        }
+        return true;
     }
 };
 
-// Hash personnalisé pour Node - permet l'utilisation d'unordered_set/unordered_map
-// OPTIMISATION: O(1) lookup au lieu de O(log n) avec std::set
 struct NodeHash {
     size_t operator()(const Node& n) const {
-        size_t h1 = std::hash<int>()(n.playerPos.first);
-        size_t h2 = std::hash<int>()(n.playerPos.second);
-        size_t h3 = 0;
-        // Combiner les positions des caisses dans le hash
-        for (const auto& box : n.boxesPos) {
-            h3 ^= std::hash<int>()(box.first) ^ (std::hash<int>()(box.second) << 1);
+        size_t hash = 14695981039346656037UL;
+        hash ^= n.playerPos;
+        hash *= 1099511628211UL;
+        for (int i = 0; i < n.boxCount; ++i) {
+            hash ^= n.boxesPos[i];
+            hash *= 1099511628211UL;
         }
-        return h1 ^ (h2 << 1) ^ (h3 << 2);
+        return hash;
     }
 };
 
-// Structure pour A* et Best-First: nœud + priorité (f(n) pour A*, h(n) pour Greedy)
-struct PriorityNode {
-    Node node;
-    double priority; // f(n) = g(n) + h(n) pour A*, ou h(n) pour Greedy
-    // Comparateur inverse: min-heap (petits f(n) en priorité)
-    bool operator>(const PriorityNode& other) const { return priority > other.priority; }
-};
-
-// Représentation d'une case du labyrinthe
 struct Square {
-    std::pair<int, int> position;  // Coordonnées (ligne, colonne)
-    SpriteType sprite;             // Type d'élément (mur, caisse, etc)
-    bool isDeadlock = false;       // Case où une caisse ne peut pas être récupérée (optimisation)
+    std::pair<int, int> position;
+    SpriteType sprite;
+    bool isDeadlock = false;
 };
 
-// Directions de mouvement: haut, bas, gauche, droite
 const std::vector<std::pair<int,int>> neighbours = {
     {-1, 0}, {1, 0}, {0, -1}, {0, 1}
 };
 
 enum Direction { TOP = 0, BOTTOM = 1, LEFT = 2, RIGHT = 3, DIRECTION_MAX = 4 };
 
-// ========== CLASSE MAZE ==========
-
 class Maze {
 private:
-    // === Données de la grille ===
-    std::vector<std::vector<Square>> m_field;     // Grille 2D du labyrinthe
-    std::pair<int, int> m_playerPosition;         // Position actuelle du joueur
-    unsigned int m_lig = 0, m_col = 0;            // Dimensions (lignes × colonnes)
-    char m_playerDirection = RIGHT;               // Direction visage du joueur
-    
-    // === Cache & Optimisations ===
-    std::vector<std::pair<int, int>> m_goals;     // Positions pré-calculées des objectifs
-    
-    // OPTIMISATION CRITIQUE: Matrice de distances pré-calculée
-    // m_distanceMatrix[idx1][idx2] = distance réelle (BFS) entre cellules
-    // idx = ligne * m_col + colonne
-    // Permet O(1) lookup au lieu de O(manhattan×boucles) à chaque appel d'heuristique
-    // Calcul au chargement avec BFS depuis chaque cellule
-    std::vector<std::vector<int>> m_distanceMatrix;
-    
-    // OPTIMISATION: Cache des heuristiques calculées
-    // Évite les recalculs pour le même état (exploré plusieurs fois)
-    // Gain: 10-100x selon les patterns d'exploration
-    std::unordered_map<Node, double, NodeHash> m_heuristicCache;
+    std::vector<std::vector<Square>> m_field;
+    std::pair<int, int> m_playerPosition;
+    unsigned int m_lig = 0, m_col = 0;
+    char m_playerDirection = RIGHT;
+
+    std::vector<int> m_goalsPtr;
+    std::vector<bool> m_isDeadlockZone;
+
+    mutable unsigned long long m_visitedCount = 0;
+
+    inline int toIndex(int r, int c) const { return r * m_col + c; }
+    inline std::pair<int, int> toCoord(int idx) const { return { idx / m_col, idx % m_col }; }
+
+    void getReachable(int startIdx, const std::vector<short>& boxes, std::vector<bool>& reachableMask, short& minIdx) const;
+    bool isSimpleDeadlock(int boxIdx, const std::vector<short>& currentBoxes) const;
+    std::vector<char> getLocalPath(int startIdx, int targetIdx, const std::vector<short>& currentBoxes) const;
+    std::vector<char> reconstructPath(const std::vector<int>& pushSteps, const Node& startState) const;
 
 public:
-    // === CONSTRUCTEUR & DESTRUCTION ===
-    Maze(const std::string& levelPath);  // Charge un niveau depuis fichier
-    
-    // === MOUVEMENTS DU JOUEUR ===
-    bool updatePlayer(char dir);         // Déplace le joueur dans une direction
-    bool isWall(const std::pair<int, int>& p) const;      // Vérifie si c'est un mur
-    bool isBox(const std::pair<int, int>& p) const;       // Vérifie s'il y a une caisse
-    bool isGoal(const std::pair<int, int>& p) const;      // Vérifie si c'est un objectif
-    bool pushBox(const std::pair<int, int>& p, char dir); // Pousse une caisse
-    
-    // === VÉRIFICATION SOLUTION ===
-    bool isSolution(const Node& n) const;  // Toutes les caisses sur les objectifs?
-    
-    // === GESTION D'ÉTAT ===
-    void setGameState(const Node& n);               // Applique un état au jeu
-    std::set<std::pair<int, int>> getBoxesPositions() const; // Récupère positions caisses
-    void detectStaticDeadlocks();                   // Détecte les coins "insolubres"
-    
-    // === AFFICHAGE ===
-    void draw(GraphicAllegro5& g) const;            // Dessine le labyrinthe
-    void playSolution(GraphicAllegro5& g, const std::vector<char>& sol); // Anime solution
+    Maze(const std::string& levelPath);
 
-    // === ALGORITHMES DE RÉSOLUTION ===
-    
-    // Niveau 1: Algorithmes non-informés
-    std::vector<char> solveBFS();   // Largeur - garantit solution optimale mais lent
-    std::vector<char> solveDFS();   // Profondeur - rapide mais pas optimal
-    
-    // Niveau 2: Algorithmes informés (avec heuristique)
-    // Ces algorithmes utilisent calculateHeuristicFast() qui utilise:
-    // - Matrice de distances pré-calculée (O(1) lookup)
-    // - Cache des heuristiques (évite recalculs)
-    inline double calculateHeuristic(const Node& n);      // Heuristique complète (fallback)
-    inline double calculateHeuristicFast(const Node& n);  // OPTIMISÉE: cache + matrice distances
-    std::vector<char> solveBestFirst();    // Greedy - très rapide, pas optimal
-    std::vector<char> solveAStar();        // A* - bon compromis rapidité/optimalité
-    std::vector<char> solveIDAstar();      // IDA* - Iterative Deepening A* (souvent plus rapide que A*)
+    // Jeu de base
+    bool updatePlayer(char dir);
+    bool isWall(int idx) const;
+    bool isWall(const std::pair<int, int>& p) const;
+    bool isGoal(int idx) const;
+    bool isGoal(const std::pair<int, int>& p) const;
+    bool pushBox(const std::pair<int, int>& p, char dir);
+
+    bool isSolution(const Node& n) const;
+    void draw(GraphicAllegro5& g) const;
+    void playSolution(GraphicAllegro5& g, const std::vector<char>& sol);
+    void setGameState(const Node& n);
+
+    Node getCurrentState() const;
+    void precomputeDeadlocks();
+
+    // --- ALGORITHMES ---
+    std::vector<char> solveBFS(); // Optimisé Poussées
+    std::vector<char> solveDFS(); // Optimisé Poussées
+
+    // Placeholders pour ne pas casser le main.cpp
+    std::vector<char> solveBestFirst() { return {}; }
+    std::vector<char> solveAStar() { return {}; }
+    std::vector<char> solveIDAstar() { return {}; }
 };
-
-#endif
-
 
 #endif

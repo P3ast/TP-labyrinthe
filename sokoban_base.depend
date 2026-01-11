@@ -65,3 +65,40 @@
 	<cmath>
 	<algorithm>
 
+1768081262 source:c:\users\mathb\downloads\tp-labyrinthe-main\tp-labyrinthe-main\graphicallegro5.cpp
+	"GraphicAllegro5.h"
+	<iostream>
+
+1768081262 c:\users\mathb\downloads\tp-labyrinthe-main\tp-labyrinthe-main\graphicallegro5.h
+	<allegro5/allegro5.h>
+	<allegro5/allegro_image.h>
+	<allegro5/allegro_primitives.h>
+	<allegro5/allegro_font.h>
+	<string>
+	<iostream>
+	<vector>
+
+1768085726 source:c:\users\mathb\downloads\tp-labyrinthe-main\tp-labyrinthe-main\maze.cpp
+	"Maze.h"
+	<fstream>
+	<iostream>
+	<queue>
+	<stack>
+	<cmath>
+	<algorithm>
+	<unordered_map>
+
+1768085707 c:\users\mathb\downloads\tp-labyrinthe-main\tp-labyrinthe-main\maze.h
+	<string>
+	<vector>
+	<queue>
+	<unordered_set>
+	<unordered_map>
+	<algorithm>
+	<array>
+	"GraphicAllegro5.h"
+
+1768085734 source:c:\users\mathb\downloads\tp-labyrinthe-main\tp-labyrinthe-main\main.cpp
+	"Maze.h"
+	"GraphicAllegro5.h"
+
