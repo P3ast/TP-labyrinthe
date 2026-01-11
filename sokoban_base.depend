@@ -102,3 +102,41 @@
 	"Maze.h"
 	"GraphicAllegro5.h"
 
+1768081262 source:c:\users\mathb\documents\github\tp-labyrinthe\graphicallegro5.cpp
+	"GraphicAllegro5.h"
+	<iostream>
+
+1768081262 c:\users\mathb\documents\github\tp-labyrinthe\graphicallegro5.h
+	<allegro5/allegro5.h>
+	<allegro5/allegro_image.h>
+	<allegro5/allegro_primitives.h>
+	<allegro5/allegro_font.h>
+	<string>
+	<iostream>
+	<vector>
+
+1768142087 source:c:\users\mathb\documents\github\tp-labyrinthe\main.cpp
+	"Maze.h"
+	"GraphicAllegro5.h"
+
+1768151668 c:\users\mathb\documents\github\tp-labyrinthe\maze.h
+	<string>
+	<vector>
+	<queue>
+	<unordered_set>
+	<unordered_map>
+	<algorithm>
+	<iostream>
+	<set>
+	"GraphicAllegro5.h"
+
+1768151694 source:c:\users\mathb\documents\github\tp-labyrinthe\maze.cpp
+	"Maze.h"
+	<fstream>
+	<iostream>
+	<queue>
+	<stack>
+	<cmath>
+	<algorithm>
+	<set>
+

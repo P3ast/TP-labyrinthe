@@ -1,0 +1,48 @@
+# Projet Sokoban - Théorie des Graphes (ESILV)
+
+Ce projet est une implémentation en C++ du jeu **Sokoban**, accompagnée d'une intelligence artificielle capable de résoudre les niveaux automatiquement. Il a été réalisé dans le cadre du module de Théorie des Graphes (Bachelor BIC3).
+
+Le projet utilise la bibliothèque graphique **Allegro 5** avec Codeblock pour l'affichage et se concentre sur l'optimisation des algorithmes de recherche de chemin.
+
+## 📋 Fonctionnalités
+
+### Jeu de base
+* Déplacements fluides du personnage (Haut, Bas, Gauche, Droite).
+* Respect strict des règles du Sokoban (pousser une seule caisse, collisions, murs).
+* Système de victoire (toutes les caisses sur les objectifs).
+
+### Algorithmes de Résolution (IA)
+Le projet intègre 4 algorithmes de recherche pour résoudre les niveaux :
+
+1.  **BFS (Parcours en Largeur) :** Garantit la solution optimale (nombre de coups minimum).
+2.  **DFS (Parcours en Profondeur) :** Explore une branche jusqu'au bout. Rapide en mémoire mais solution non optimale.
+3.  **Greedy Best-First Search (Glouton) :** Utilise une heuristique pour foncer vers l'objectif. Très rapide mais pas toujours optimal.
+4.  **A* (A-Star) :** Combine le coût réel et l'heuristique. Garantit la solution optimale tout en étant guidé.
+
+
+### Touche de jeu 
+Touche	Action
+Flèches	Déplacer le joueur manuellement
+B	Lancer la résolution BFS (Largeur)
+D	Lancer la résolution DFS (Profondeur)
+G	Lancer la résolution Greedy (Glouton)
+A	Lancer la résolution A* (A-Star)
+R	Recommencer le niveau (Reset)
+
+### Optimisations Techniques
+Pour répondre aux contraintes de performance (Level 2) :
+* **Hachage Personnalisé :** Utilisation de `std::unordered_set` avec un hash custom pour stocker les états visités en **O(1)**.
+* **Matrice de Distances Pré-calculée :** Au chargement du niveau, les distances réelles vers les objectifs sont calculées pour rendre l'heuristique instantanée.
+* **Détection de Deadlocks Statiques :** Les coins et zones bloquantes sont détectés au démarrage et marqués en **ROUGE**. L'IA évite ces cases.
+
+## 🚀 Installation et Compilation
+
+### Prérequis
+* Un compilateur C++ compatible C++11 ou supérieur (GCC, MinGW, MSVC).
+* La bibliothèque **Allegro 5** installée et liée au projet.
+
+### Compilation (Exemple avec g++)
+Si vous compilez manuellement, assurez-vous de lier les bibliothèques Allegro :
+
+```bash
+g++ main.cpp Maze.cpp GraphicAllegro5.cpp -o sokoban -lallegro -lallegro_main -lallegro_image -lallegro_font -lallegro_primitives
