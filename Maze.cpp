@@ -523,69 +523,158 @@ std::vector<char> Maze::solveBestFirst() {
     return {};
 }
 
-// 4. A* (Pondéré) - Utilise g(n) + h(n)
+// ============================================================
+// 4. A* (Pondéré) - Algorithme de recherche optimal
+// ============================================================
+// 
+// CONCEPT PRINCIPAL :
+// A* combine deux informations pour chaque état :
+//   - g(n) : le coût RÉEL depuis le départ jusqu'à l'état n
+//            (= nombre de poussées effectuées jusqu'à présent)
+//   - h(n) : une ESTIMATION du coût pour aller de n vers la solution
+//            (= distance totale des boîtes jusqu'aux objectifs les plus proches)
+// 
+// La PRIORITÉ de chaque état = g(n) + (h(n) × W)
+//   où W est un poids multiplicatif (W > 1 = plus agressif, plus vite mais moins optimal)
+// 
+// AVANTAGES :
+//   ✓ Garantit d'avoir une solution optimale (contrairement à Greedy)
+//   ✓ Plus efficace que BFS car l'heuristique guide la recherche
+//   ✓ Explore moins d'états inutiles que BFS grâce au W pondérant
+// 
+// STRUCTURES DE DONNÉES :
+//   - `pq` (Priority Queue) : file prioritaire min-heap
+//     → extrait toujours l'état avec la PLUS PETITE priorité
+//   - `costSoFar` : map Node → nombre de poussées depuis le départ
+//   - `cameFrom` : map Node → (Parent + Direction + Index Boîte) pour reconstruction
+// 
+// ============================================================
+
 std::vector<char> Maze::solveAStar() {
+    // Réinitialiser le jeu à l'état de départ
     setGameState(m_startState);
     std::cout << "--- Start A* ---" << std::endl;
 
+    // File prioritaire MIN-HEAP : donne toujours l'état avec la plus petite priorité
     std::priority_queue<PriorityNode, std::vector<PriorityNode>, std::greater<PriorityNode>> pq;
+    
+    // Map pour mémoriser le coût RÉEL (nombre de poussées) depuis le départ
     std::unordered_map<Node, int, NodeHash> costSoFar;
+    
+    // Map pour sauvegarder le chemin (parent + direction) pour reconstruction
     std::unordered_map<Node, Chain, NodeHash> cameFrom;
 
+    // === INITIALISATION ===
     Node start = m_startState;
     std::vector<bool> reachable(m_lig * m_col);
     std::pair<int, int> canon;
+    
+    // Calcule la position "canonique" du joueur (optimisation : évite les états équivalents)
     getReachable(start.playerPos, start.boxesPos, reachable, canon);
     start.playerPos = canon;
 
+    // Ajouter l'état initial à la file avec priorité 0 (pas de coût, pas d'heuristique)
     pq.push(PriorityNode(start, 0));
-    costSoFar[start] = 0;
-    cameFrom[start] = {start, -1, -1};
+    costSoFar[start] = 0;  // Coût du départ = 0 poussées
+    cameFrom[start] = {start, -1, -1};  // Sentinel : pas de parent
 
-    double W = 5.0; // Poids heuristique pour vitesse
+    // Poids heuristique (W > 1 = préfère rapidité à optimalité)
+    // Exemple : W=5.0 signifie que l'heuristique est 5× plus importante que g(n)
+    double W = 5.0;
 
+    // === BOUCLE PRINCIPALE ===
+    // Tant qu'il y a des états à explorer...
     while (!pq.empty()) {
+        // Extraire l'état avec la MEILLEURE priorité (= plus proche de la solution)
         Node curr = pq.top().node; pq.pop();
+        
+        // Vérifier si cet état EST une solution (toutes les boîtes sur les objectifs)
         if (isSolution(curr)) {
+            // Reconstruction du chemin complet (poussées → mouvements du joueur)
             return reconstructFullPath(curr, start, cameFrom);
         }
 
+        // Récupérer le coût RÉEL de cet état (nombre de poussées jusqu'ici)
         int currentCost = costSoFar[curr];
+        
+        // Calculer les cases accessibles par le joueur sans pousser de boîte
+        // (optimisation : réduit le nombre d'états redondants)
         getReachable(curr.playerPos, curr.boxesPos, reachable, canon);
 
+        // === EXPLORATION DE TOUS LES COUPS POSSIBLES ===
+        // Pour chaque boîte du plateau...
         for (size_t i = 0; i < curr.boxesPos.size(); ++i) {
             std::pair<int, int> box = curr.boxesPos[i];
+            
+            // Pour chaque direction (HAUT, BAS, GAUCHE, DROITE)...
             for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
-                int pfR = box.first - neighbours[dir].first;
-                int pfC = box.second - neighbours[dir].second;
+                // Calculer où le joueur doit se placer pour pousser la boîte dans cette direction
+                // (il faut être derrière la boîte)
+                int pfR = box.first - neighbours[dir].first;  // "push-from" Row
+                int pfC = box.second - neighbours[dir].second; // "push-from" Column
                 int pfIdx = toIndex(pfR, pfC);
 
+                // VÉRIFICATION 1 : Le joueur peut-il atteindre cette position sans pousser ?
                 if (pfIdx < 0 || pfIdx >= (int)reachable.size() || !reachable[pfIdx]) continue;
 
-                int dtR = box.first + neighbours[dir].first;
-                int dtC = box.second + neighbours[dir].second;
+                // Calculer où la boîte atterrirait après la poussée
+                int dtR = box.first + neighbours[dir].first;   // destination Row
+                int dtC = box.second + neighbours[dir].second;  // destination Column
+                
+                // VÉRIFICATION 2a : La destination n'est pas un mur ?
+                // VÉRIFICATION 2b : La destination n'est pas un deadlock (piège) ?
                 if (isWall({dtR, dtC}) || m_field[dtR][dtC].isDeadlock) continue;
+                
+                // VÉRIFICATION 3 : Aucune autre boîte à la destination ?
                 if (std::binary_search(curr.boxesPos.begin(), curr.boxesPos.end(), std::pair<int,int>{dtR, dtC})) continue;
 
+                // === CRÉATION DU NOUVEL ÉTAT APRÈS LA POUSSÉE ===
+                // Copier l'état courant pour le modifier
                 Node next = curr;
+                // Mettre à jour la position de la boîte i
                 next.boxesPos[i] = {dtR, dtC};
+                // Trier les boîtes pour obtenir une représentation CANONIQUE
+                // (permet de détecter les doublons : même config = même tri)
                 std::sort(next.boxesPos.begin(), next.boxesPos.end());
 
+                // Calculer la position canonique du joueur dans ce nouvel état
+                // (le joueur se trouve maintenant sur l'ancienne case de la boîte)
                 std::vector<bool> tempMask(m_lig * m_col);
                 std::pair<int, int> nextCanon;
                 getReachable(box, next.boxesPos, tempMask, nextCanon);
                 next.playerPos = nextCanon;
 
+                // === CALCUL DU COÛT g(n) ===
+                // Le coût du nouvel état = coût actuel + 1 poussée
                 int newCost = currentCost + 1;
+                
+                // === CRITÈRE DE RELAXATION (comme dans Dijkstra) ===
+                // N'ajouter/mettre à jour le nouvel état que si :
+                //   - Nous l'explorons pour la 1ère fois, OU
+                //   - Nous trouvons un chemin plus court que celui connu
                 if (costSoFar.find(next) == costSoFar.end() || newCost < costSoFar[next]) {
+                    // Mettre à jour le coût réel
                     costSoFar[next] = newCost;
+                    
+                    // === CALCUL DE LA PRIORITÉ (FORMULE A*) ===
+                    // priorité = g(n) + (h(n) × W)
+                    //   g(n) = coût réel depuis le départ
+                    //   h(n) = estimation heuristique (distance boîtes aux objectifs)
+                    //   W = poids (pondération de l'heuristique)
                     double priority = newCost + (calculateHeuristicFast(next) * W);
+                    
+                    // Ajouter le nouvel état à la file avec sa priorité
+                    // (la file l'insère au bon endroit pour rester triée)
                     pq.push(PriorityNode(next, priority));
+                    
+                    // Mémoriser le chemin : "pour arriver à next, on vient de curr"
                     cameFrom[next] = {curr, (char)dir, (int)i};
                 }
             }
         }
     }
+    
+    // Si on sort de la boucle sans avoir trouvé de solution
     return {};
 }
 

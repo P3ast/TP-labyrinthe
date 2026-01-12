@@ -135,7 +135,11 @@ public:
     std::vector<char> solveBFS();
     std::vector<char> solveDFS();
     std::vector<char> solveBestFirst();
+    
+    // A* : Algorithme de recherche optimal qui combine le coût réel g(n) et l'heuristique h(n)
+    // pour explorer intelligemment l'espace d'états. C'est une amélioration de BFS et Greedy.
     std::vector<char> solveAStar();
+    
     std::vector<char> solveIDAstar();
 
     // ICI : Ajout de la déclaration manquante
