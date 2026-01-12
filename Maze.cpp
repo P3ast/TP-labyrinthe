@@ -29,7 +29,7 @@ Maze::Maze(const std::string& levelPath) {
                 if (s.sprite == SpriteType::PLAYER || s.sprite == SpriteType::PLAYER_ON_GOAL) {
                     this->m_playerPosition = std::make_pair(i, j);
                     s.sprite = (s.sprite == SpriteType::PLAYER_ON_GOAL) ? SpriteType::GOAL : SpriteType::GROUND;
-                }
+                }sh_back({(int)i, (int)j});
                 if (s.sprite == SpriteType::GOAL || s.sprite == SpriteType::BOX_PLACED) {
                     m_goals.push_back({(int)i, (int)j});
                 }
@@ -40,10 +40,10 @@ Maze::Maze(const std::string& levelPath) {
         }
     }
 
-    // IMPORTANT : Sauvegarde de l'état initial APRES le chargement complet
+    // IMPORTANT : Sauvegarde de l'état initial APRES le chargement complet (pour recommencer le niveau)
     m_startState = { m_playerPosition, getBoxesPositions() };
 
-    detectStaticDeadlocks();
+    detectStaticDeadlocks(); // On calcule les coins où les caisses pourraient se bloquer
 
     // Matrice distances (Heuristique)
     unsigned int totalCells = m_lig * m_col;
@@ -68,14 +68,14 @@ Maze::Maze(const std::string& levelPath) {
         }
     }
 }
-
+// détecte les coins ou murs ou une caisse serait bloquée
 void Maze::detectStaticDeadlocks() {
     for (unsigned int i = 1; i < m_lig - 1; ++i) {
         for (unsigned int j = 1; j < m_col - 1; ++j) {
             if (m_field[i][j].sprite != SpriteType::WALL) {
                 bool u = isWall({i-1, j}); bool d = isWall({i+1, j});
                 bool l = isWall({i, j-1}); bool r = isWall({i, j+1});
-                if (((u && l) || (u && r) || (d && l) || (d && r)) && !isGoal({i,j}))
+                if (((u && l) || (u && r) || (d && l) || (d && r)) && !isGoal({i,j})) // defaite si la case touche 2 murs et n'est pas un objectif
                     m_field[i][j].isDeadlock = true;
             }
         }
@@ -84,6 +84,7 @@ void Maze::detectStaticDeadlocks() {
 
 // --- HELPERS ---
 
+// récupère la liste triée des caisses (utile pour comparer 2 états)
 std::vector<std::pair<int, int>> Maze::getBoxesPositions() const {
     std::vector<std::pair<int, int>> boxes;
     for (unsigned int i = 0; i < m_lig; ++i)
@@ -93,7 +94,7 @@ std::vector<std::pair<int, int>> Maze::getBoxesPositions() const {
     std::sort(boxes.begin(), boxes.end());
     return boxes;
 }
-
+// replace les caisses et le joueur selon une photo (node) précise
 void Maze::setGameState(const Node& n) {
     m_playerPosition = n.playerPos;
     for (unsigned int i = 0; i < m_lig; ++i)
@@ -105,7 +106,7 @@ void Maze::setGameState(const Node& n) {
         else m_field[pos.first][pos.second].sprite = SpriteType::BOX;
     }
 }
-
+// calcul toutes les cases accessibles par le joueur sans pousser de caisses
 void Maze::getReachable(std::pair<int, int> start, const std::vector<std::pair<int, int>>& boxes, std::vector<bool>& mask, std::pair<int, int>& minPos) const {
     std::fill(mask.begin(), mask.end(), false);
     std::queue<std::pair<int, int>> q;
@@ -116,7 +117,7 @@ void Maze::getReachable(std::pair<int, int> start, const std::vector<std::pair<i
 
     while(!q.empty()){
         auto curr = q.front(); q.pop();
-        if (curr < minPos) minPos = curr; // Position canonique
+        if (curr < minPos) minPos = curr; // on garde la position la plus petite pour que chaque état soit unique
 
         for (const auto& nbr : neighbours) {
             int nr = curr.first + nbr.first;
@@ -132,7 +133,7 @@ void Maze::getReachable(std::pair<int, int> start, const std::vector<std::pair<i
         }
     }
 }
-
+// trouve le chemin de marche (pas de poussée) pour aller d'un point A à un point B
 std::vector<char> Maze::getWalkPath(std::pair<int, int> start, std::pair<int, int> target, const std::vector<std::pair<int, int>>& boxes) const {
     if (start == target) return {};
     std::queue<std::pair<int, int>> q;
@@ -170,7 +171,7 @@ std::vector<char> Maze::getWalkPath(std::pair<int, int> start, std::pair<int, in
     }
     return {};
 }
-
+// Estime la distance totale entre les caisses et leurs objectifs
 double Maze::calculateHeuristicFast(const Node& n) {
     if (m_goals.empty() || n.boxesPos.empty()) return 0;
     double totalDist = 0;
@@ -189,7 +190,7 @@ double Maze::calculateHeuristicFast(const Node& n) {
 double Maze::calculateHeuristic(const Node& n) { return calculateHeuristicFast(n); }
 
 // --- RECONSTRUCTION ---
-
+// transforme la liste de poussées de l'IA en une liste complète de pas pour le joueur 
 std::vector<char> Maze::reconstructFullPath(Node current, Node start, std::unordered_map<Node, Chain, NodeHash>& cameFrom) const {
     std::vector<char> fullPath;
     std::vector<Chain> moves;
@@ -218,7 +219,7 @@ std::vector<char> Maze::reconstructFullPath(Node current, Node start, std::unord
         // Chemin marche
         std::vector<char> walk = getWalkPath(simState.playerPos, standPos, simState.boxesPos);
         fullPath.insert(fullPath.end(), walk.begin(), walk.end());
-        fullPath.push_back((char)move.move); // Poussée
+        fullPath.push_back((char)move.move); // Poussée finale 
 
         // Mise à jour simState (pour le prochain tour de boucle)
         simState.playerPos = boxPos; // Joueur avance sur la case de la boite
@@ -531,7 +532,7 @@ std::vector<char> Maze::solveAStar() {
 }
 
 // --- BASICS ---
-
+// vérifie si on est hors des limites du tableau
 bool Maze::isWall(const std::pair<int, int>& p) const {
     if (p.first < 0 || p.first >= (int)m_lig || p.second < 0 || p.second >= (int)m_col) return true;
     return m_field[p.first][p.second].sprite == SpriteType::WALL;
@@ -560,6 +561,7 @@ bool Maze::isSolution(const Node& n) const {
     for (const auto& bPos : n.boxesPos) if (!isGoal(bPos)) return false;
     return true;
 }
+//affiche les deadlocks en rouge 
 void Maze::draw(GraphicAllegro5& g) const {
     for (unsigned int i = 0; i < m_field.size(); ++i) {
         for (unsigned int j = 0; j < m_field[i].size(); ++j) {
@@ -574,7 +576,7 @@ void Maze::draw(GraphicAllegro5& g) const {
     g.drawT(g.getSpritePlayer(m_playerDirection), m_playerPosition.second, m_playerPosition.first);
 }
 
-// Fonction de Replay avec boucle
+// Fonction de Replay avec boucle infinie 
 void Maze::playSolution(GraphicAllegro5& g, const std::vector<char>& sol) {
     bool replay = true;
     while(replay) {
