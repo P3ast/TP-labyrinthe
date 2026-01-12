@@ -110,12 +110,17 @@ public:
     bool isWall(const std::pair<int, int>& p) const;
     bool isGoal(const std::pair<int, int>& p) const;
     bool isSolution(const Node& n) const;
+    bool bruteForceRecursive(Node& current, int depth, int maxDepth, 
+                             std::vector<char>& path, 
+                             std::unordered_set<Node, NodeHash>& visited, 
+                             unsigned long long& nodes);
     void draw(GraphicAllegro5& g) const;
 
     void playSolution(GraphicAllegro5& g, const std::vector<char>& sol);
     void detectStaticDeadlocks();
 
     // Algorithmes Séparés et Distincts
+    std::vector<char> solveBruteForce();
     std::vector<char> solveBFS();
     std::vector<char> solveDFS();
     std::vector<char> solveBestFirst();

@@ -4,7 +4,7 @@
 GraphicAllegro5 graphic(1024, 768);
 
 int main() {
-    const std::string level = "levels/Easy2.txt";
+    const std::string level = "levels/Easy1.txt";
     Maze m(level);
     graphic.show();
 
@@ -13,6 +13,11 @@ int main() {
         if (graphic.keyGet(ALLEGRO_KEY_DOWN)) m.updatePlayer(BOTTOM);
         if (graphic.keyGet(ALLEGRO_KEY_LEFT)) m.updatePlayer(LEFT);
         if (graphic.keyGet(ALLEGRO_KEY_RIGHT)) m.updatePlayer(RIGHT);
+
+        if (graphic.keyGet(ALLEGRO_KEY_F)) { // Touche F pour Brute Force
+            std::vector<char> sol = m.solveBruteForce();
+            if (!sol.empty()) m.playSolution(graphic, sol);
+        }
 
         if (graphic.keyGet(ALLEGRO_KEY_B)) { // BFS
             std::vector<char> sol = m.solveBFS();

@@ -242,6 +242,55 @@ std::vector<char> Maze::reconstructFullPath(Node current, Node start, std::unord
 
 // --- ALGORITHMES SEPARÉS ---
 
+// 0. Brute Force (Naïf - Niveau 1)
+std::vector<char> Maze::solveBruteForce() {
+    setGameState(m_startState);
+    std::cout << "--- Start Brute Force ---" << std::endl;
+
+    Node startNode = m_startState;
+    std::vector<char> path;
+    std::unordered_set<Node, NodeHash> visited;
+    unsigned long long nodesExplored = 0;
+
+    // Recherche par approfondissement itératif (respecte l'optimalité demandée)
+    for (int maxDepth = 1; maxDepth < 50; ++maxDepth) {
+        path.clear();
+        visited.clear();
+        if (bruteForceRecursive(startNode, 0, maxDepth, path, visited, nodesExplored)) {
+            return path;
+        }
+    }
+    return {};
+}
+
+bool Maze::bruteForceRecursive(Node& current, int depth, int maxDepth, std::vector<char>& path, std::unordered_set<Node, NodeHash>& visited, unsigned long long& nodes) {
+    if (isSolution(current)) return true;
+    if (depth >= maxDepth) return false;
+
+    nodes++; // Pour ton tableau comparatif
+    visited.insert(current);
+
+    // Ordre imposé : HAUT, BAS, GAUCHE, DROITE
+    for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
+        setGameState(current);
+        if (updatePlayer(dir)) {
+            Node next = { m_playerPosition, getBoxesPositions() };
+
+            // Vérification des deadlocks (Niveau 1)
+            bool deadlocked = false;
+            for(auto& b : next.boxesPos) if(m_field[b.first][b.second].isDeadlock) deadlocked = true;
+
+            if (!deadlocked && visited.find(next) == visited.end()) {
+                path.push_back((char)dir);
+                if (bruteForceRecursive(next, depth + 1, maxDepth, path, visited, nodes)) return true;
+                path.pop_back(); // Backtracking
+            }
+        }
+    }
+    visited.erase(current);
+    return false;
+}
+
 // 1. BFS (Push-Only, Optimal en Poussées)
 std::vector<char> Maze::solveBFS() {
     setGameState(m_startState);
@@ -439,7 +488,6 @@ std::vector<char> Maze::solveAStar() {
     while (!pq.empty()) {
         Node curr = pq.top().node; pq.pop();
         if (isSolution(curr)) {
-            std::cout << "A* Solved! Nodes: " << costSoFar.size() << std::endl;
             return reconstructFullPath(curr, start, cameFrom);
         }
 
