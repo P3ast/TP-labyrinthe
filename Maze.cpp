@@ -292,32 +292,63 @@ bool Maze::bruteForceRecursive(Node& current, int depth, int maxDepth, std::vect
     return false;
 }
 
-// 1. BFS (Push-Only, Optimal en Poussées)
+// 1. BFS (Parcours en largeur - "Push-Only")
+//
+// Explication :
+// - But : trouver une séquence de poussées qui place toutes les boîtes sur les emplacements cibles.
+// - Méthode : parcours en largeur (BFS) sur l'espace d'états où chaque état contient :
+//     * positions des boîtes (triées pour obtenir une représentation canonique)
+//     * position "canonique" du joueur (réduite par `getReachable` pour éviter états équivalents)
+// - Structures utilisées :
+//     * `std::queue<Node> q` : file FIFO pour explorer couche par couche (garantit optimalité en nombre de poussées)
+//     * `cameFrom` (map) : sert à la fois de marquage des états visités et à la reconstruction du chemin
+// - Étapes clefs (implémentation) :
+//     1. Calculer les cases accessibles par le joueur (sans bouger de boîte) avec `getReachable`.
+//     2. Pour chaque boîte et chaque direction possible :
+//         - vérifier si la case de poussée est atteignable par le joueur
+//         - vérifier que la destination n'est pas un mur, un deadlock, ni occupée par une autre boîte
+//         - construire l'état `next` (mettre à jour la position de la boîte, trier les positions pour la canonicité)
+//         - recalculer la position canonique du joueur dans `next` (le joueur se trouve sur l'ancienne position de la boîte)
+//         - si `next` n'a pas été visité, l'ajouter à la queue et enregistrer `cameFrom[next]`
+// - Propriétés : BFS trouve la solution minimisant le nombre de poussées ; coût mémoire élevé dans les pires cas.
+//
+// Remarque : `cameFrom[start] = {start, -1, -1}` initialise la racine (cas de base) utilisée lors de la reconstruction.
 std::vector<char> Maze::solveBFS() {
     setGameState(m_startState);
     std::cout << "--- Start BFS ---" << std::endl;
     std::queue<Node> q;
-    std::unordered_map<Node, Chain, NodeHash> cameFrom; // Pour reconstruction
+    std::unordered_map<Node, Chain, NodeHash> cameFrom; // Pour reconstruction (et marquage des visités)
 
     // Init
     Node start = m_startState;
     std::vector<bool> reachable(m_lig * m_col);
     std::pair<int, int> canon;
+    // `getReachable` : calcule les cases atteignables par le joueur sans pousser de boîte.
+    // `canon` est la position canonique du joueur (optimisation : réduit le nombre d'états équivalents)
     getReachable(start.playerPos, start.boxesPos, reachable, canon);
     start.playerPos = canon;
 
     q.push(start);
-    cameFrom[start] = {start, -1, -1}; // Racine
+    cameFrom[start] = {start, -1, -1}; // Racine (sentinel pour la reconstruction)
 
     while (!q.empty()) {
         Node curr = q.front(); q.pop();
         if (isSolution(curr)) return reconstructFullPath(curr, start, cameFrom);
 
+        // Recalcule les cases atteignables par le joueur depuis l'état courant (sans pousser de boîte).
+        // Le vecteur `reachable` indique quelles cases sont atteignables ; `canon` reçoit la position "canonique" du joueur
+        // (optimisation qui réduit les états équivalents en normalisant la position du joueur).
         getReachable(curr.playerPos, curr.boxesPos, reachable, canon);
 
+        // Boucle 1 : parcourir toutes les boîtes de l'état courant pour tester les poussées possibles
         for (size_t i = 0; i < curr.boxesPos.size(); ++i) {
+            // Récupère la position (ligne, colonne) de la i-ème boîte
             std::pair<int, int> box = curr.boxesPos[i];
+
+            // Boucle 2 : tester chaque direction de poussée (ex. haut/bas/gauche/droite)
+            // `neighbours[dir]` contient le déplacement correspondant à la direction `dir`.
             for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
+                // Position "poussante" (case où le joueur doit se tenir pour pousser)
                 int pfR = box.first - neighbours[dir].first;
                 int pfC = box.second - neighbours[dir].second;
                 int pfIdx = toIndex(pfR, pfC);
@@ -326,14 +357,18 @@ std::vector<char> Maze::solveBFS() {
                 if (pfIdx < 0 || pfIdx >= (int)reachable.size() || !reachable[pfIdx]) continue;
 
                 // Destination valide ?
+                // dtR/dtC = position où la boîte arriverait après la poussée dans la direction `dir`
                 int dtR = box.first + neighbours[dir].first;
                 int dtC = box.second + neighbours[dir].second;
                 if (isWall({dtR, dtC}) || m_field[dtR][dtC].isDeadlock) continue;
                 if (std::binary_search(curr.boxesPos.begin(), curr.boxesPos.end(), std::pair<int,int>{dtR, dtC})) continue;
 
-                // Nouvel état
+                // Nouvel état après la poussée
                 Node next = curr;
+                // Met à jour la position de la boîte i-ème vers la destination calculée
                 next.boxesPos[i] = {dtR, dtC};
+                // Trie les positions des boîtes pour conserver une représentation canonique de l'état
+                // (évite que deux états identiques mais avec boîtes dans un ordre différent soient traités comme différents)
                 std::sort(next.boxesPos.begin(), next.boxesPos.end());
 
                 std::vector<bool> tempMask(m_lig * m_col);
@@ -351,7 +386,18 @@ std::vector<char> Maze::solveBFS() {
     return {};
 }
 
-// 2. DFS (Push-Only)
+// 2. DFS (Parcours en profondeur - "Push-Only")
+//
+// Explication (FR) :
+// - But : même espace d'états que BFS, mais exploration en profondeur (LIFO) : on suit une branche jusqu'à épuisement.
+// - Structures : `std::stack<Node> s` (pile) ; `cameFrom` sert aussi de marquage des états visités et permet la reconstruction.
+// - Caractéristiques : DFS consomme généralement moins de mémoire que BFS mais ne garantit pas la solution optimale ;
+//   elle peut explorer longtemps des branches non utiles.
+// - Particularités d'implémentation : l'ordre inverse des boîtes est utilisé pour garantir un parcours déterministe.
+// - Étapes clefs : pour chaque boîte et chaque direction, vérifier l'accessibilité du joueur, la validité de la destination
+//   (mur, deadlock, présence d'une autre boîte), construire l'état `next`, normaliser (`sort`) et empiler si non visité.
+// - Remarque : `cameFrom` empêche les boucles infinites ; la reconstruction du chemin se fait avec `reconstructFullPath`.
+
 std::vector<char> Maze::solveDFS() {
     setGameState(m_startState);
     std::cout << "--- Start DFS ---" << std::endl;
@@ -361,6 +407,7 @@ std::vector<char> Maze::solveDFS() {
     Node start = m_startState;
     std::vector<bool> reachable(m_lig * m_col);
     std::pair<int, int> canon;
+    // Normalisation de la position du joueur avant d'insérer l'état initial
     getReachable(start.playerPos, start.boxesPos, reachable, canon);
     start.playerPos = canon;
 
@@ -409,6 +456,8 @@ std::vector<char> Maze::solveDFS() {
 
 // 3. Greedy (Best First) - Utilise h(n) uniquement
 std::vector<char> Maze::solveBestFirst() {
+    // Remet l'état du jeu à l'état de départ (`m_startState`) : utile si on exécute plusieurs algos l'un après l'autre
+    // pour s'assurer que l'algorithme commence toujours du même point.
     setGameState(m_startState);
     std::cout << "--- Start Greedy ---" << std::endl;
 
@@ -419,6 +468,7 @@ std::vector<char> Maze::solveBestFirst() {
     Node start = m_startState;
     std::vector<bool> reachable(m_lig * m_col);
     std::pair<int, int> canon;
+    // Calcule les cases atteignables par le joueur depuis l'état initial et la position canonique du joueur
     getReachable(start.playerPos, start.boxesPos, reachable, canon);
     start.playerPos = canon;
 
@@ -429,24 +479,36 @@ std::vector<char> Maze::solveBestFirst() {
         Node curr = pq.top().node; pq.pop();
         if (isSolution(curr)) return reconstructFullPath(curr, start, cameFrom);
 
+        // Met à jour le masque des cases atteignables pour l'état courant
         getReachable(curr.playerPos, curr.boxesPos, reachable, canon);
 
+        // Boucle 1 (ligne ~424) : pour chaque boîte de l'état courant, on va tester toutes les poussées possibles
         for (size_t i = 0; i < curr.boxesPos.size(); ++i) {
             std::pair<int, int> box = curr.boxesPos[i];
+
+            // Boucle 2 (ligne ~426) : itère sur toutes les directions (haut, bas, gauche, droite)
             for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
+                // `pfR`/`pfC` = coordonnées de la case "push-from" (la case où le joueur doit se placer pour pousser la boîte)
                 int pfR = box.first - neighbours[dir].first;
                 int pfC = box.second - neighbours[dir].second;
                 int pfIdx = toIndex(pfR, pfC);
 
+                // if (ligne ~431) : on vérifie que la case de poussée existe dans la grille et que le joueur
+                // peut l'atteindre (grâce à `reachable`); sinon on passe à la direction suivante.
                 if (pfIdx < 0 || pfIdx >= (int)reachable.size() || !reachable[pfIdx]) continue;
 
+                // dtR/dtC = coordonnées de la destination de la boîte après la poussée
                 int dtR = box.first + neighbours[dir].first;
                 int dtC = box.second + neighbours[dir].second;
+
+                // if (ligne ~435) : si la destination est un mur ou un deadlock (position interdite), on ignore cette poussée
                 if (isWall({dtR, dtC}) || m_field[dtR][dtC].isDeadlock) continue;
+                // if (ligne ~436) : si la destination est déjà occupée par une autre boîte, on ignore aussi
                 if (std::binary_search(curr.boxesPos.begin(), curr.boxesPos.end(), std::pair<int,int>{dtR, dtC})) continue;
 
                 Node next = curr;
                 next.boxesPos[i] = {dtR, dtC};
+                // Tri pour la canonicité de l'état (éviter doublons d'états identiques avec ordres différents)
                 std::sort(next.boxesPos.begin(), next.boxesPos.end());
 
                 std::vector<bool> tempMask(m_lig * m_col);
