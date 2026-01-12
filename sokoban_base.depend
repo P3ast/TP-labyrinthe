@@ -141,3 +141,42 @@
 	<unordered_map>
 	<limits>
 
+1768250856 source:c:\users\ungth\onedrive - dvhe\travail_esilv\a3\graph\projet\tp-labyrinthe-main (1)\tp-labyrinthe-main\graphicallegro5.cpp
+	"GraphicAllegro5.h"
+	<iostream>
+
+1768250856 c:\users\ungth\onedrive - dvhe\travail_esilv\a3\graph\projet\tp-labyrinthe-main (1)\tp-labyrinthe-main\graphicallegro5.h
+	<allegro5/allegro5.h>
+	<allegro5/allegro_image.h>
+	<allegro5/allegro_primitives.h>
+	<allegro5/allegro_font.h>
+	<string>
+	<iostream>
+	<vector>
+
+1768251168 source:c:\users\ungth\onedrive - dvhe\travail_esilv\a3\graph\projet\tp-labyrinthe-main (1)\tp-labyrinthe-main\main.cpp
+	"Maze.h"
+	"GraphicAllegro5.h"
+
+1768253218 c:\users\ungth\onedrive - dvhe\travail_esilv\a3\graph\projet\tp-labyrinthe-main (1)\tp-labyrinthe-main\maze.h
+	<string>
+	<vector>
+	<queue>
+	<stack>
+	<unordered_set>
+	<unordered_map>
+	<algorithm>
+	<iostream>
+	"GraphicAllegro5.h"
+
+1768250856 source:c:\users\ungth\onedrive - dvhe\travail_esilv\a3\graph\projet\tp-labyrinthe-main (1)\tp-labyrinthe-main\maze.cpp
+	"Maze.h"
+	<fstream>
+	<iostream>
+	<queue>
+	<stack>
+	<cmath>
+	<algorithm>
+	<unordered_map>
+	<limits>
+

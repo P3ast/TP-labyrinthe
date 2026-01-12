@@ -243,52 +243,84 @@ std::vector<char> Maze::reconstructFullPath(Node current, Node start, std::unord
 
 // --- ALGORITHMES SEPARÉS ---
 
-// 0. Brute Force (Naïf - Niveau 1)
+// 0. Brute Force (Push-Only - Iterative Deepening sur le nombre de poussées)
+// Remarque : l'ancienne version explorait tous les déplacements du joueur (énorme factorielle).
+// Ici on ne considère que les poussées (comme BFS/DFS), et on compte la profondeur en nombre de poussées.
 std::vector<char> Maze::solveBruteForce() {
     setGameState(m_startState);
-    std::cout << "--- Start Brute Force ---" << std::endl;
+    std::cout << "--- Start Brute Force (Push-Only) ---" << std::endl;
 
     Node startNode = m_startState;
-    std::vector<char> path;
-    std::unordered_set<Node, NodeHash> visited;
-    unsigned long long nodesExplored = 0;
+    std::unordered_map<Node, Chain, NodeHash> cameFrom;
 
-    // Recherche par approfondissement itératif (respecte l'optimalité demandée)
-    for (int maxDepth = 1; maxDepth < 50; ++maxDepth) {
-        path.clear();
-        visited.clear();
-        if (bruteForceRecursive(startNode, 0, maxDepth, path, visited, nodesExplored)) {
-            return path;
+    // Recherche par approfondissement itératif (profondeur = nombre de poussées)
+    for (int maxDepth = 1; maxDepth < 100; ++maxDepth) {
+        cameFrom.clear();
+        
+        // normaliser la position du joueur pour l'état initial
+        std::vector<bool> reachable(m_lig * m_col);
+        std::pair<int,int> canon;
+        getReachable(startNode.playerPos, startNode.boxesPos, reachable, canon);
+        startNode.playerPos = canon;
+        
+        cameFrom[startNode] = {startNode, -1, -1}; // Racine
+        
+        Node goalNode;
+        if (bruteForceRecursive(startNode, 0, maxDepth, cameFrom, goalNode)) {
+            std::cout << "Solution found at depth " << maxDepth << std::endl;
+            return reconstructFullPath(goalNode, startNode, cameFrom);
         }
     }
     return {};
 }
 
-bool Maze::bruteForceRecursive(Node& current, int depth, int maxDepth, std::vector<char>& path, std::unordered_set<Node, NodeHash>& visited, unsigned long long& nodes) {
-    if (isSolution(current)) return true;
+bool Maze::bruteForceRecursive(Node& current, int depth, int maxDepth, std::unordered_map<Node, Chain, NodeHash>& cameFrom, Node& goalNode) {
+    if (isSolution(current)) {
+        goalNode = current;
+        return true;
+    }
     if (depth >= maxDepth) return false;
 
-    nodes++; // Pour ton tableau comparatif
-    visited.insert(current);
+    // Calculer les cases atteignables par le joueur sans pousser
+    std::vector<bool> reachable(m_lig * m_col);
+    std::pair<int, int> canon;
+    getReachable(current.playerPos, current.boxesPos, reachable, canon);
 
-    // Ordre imposé : HAUT, BAS, GAUCHE, DROITE
-    for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
-        setGameState(current);
-        if (updatePlayer(dir)) {
-            Node next = { m_playerPosition, getBoxesPositions() };
+    // Pour chaque boîte, essayer toutes les directions de poussée possibles
+    for (size_t i = 0; i < current.boxesPos.size(); ++i) {
+        std::pair<int, int> box = current.boxesPos[i];
+        for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
+            int pfR = box.first - neighbours[dir].first;
+            int pfC = box.second - neighbours[dir].second;
+            int pfIdx = toIndex(pfR, pfC);
 
-            // Vérification des deadlocks (Niveau 1)
-            bool deadlocked = false;
-            for(auto& b : next.boxesPos) if(m_field[b.first][b.second].isDeadlock) deadlocked = true;
+            // Le joueur doit pouvoir atteindre la case de poussée
+            if (pfIdx < 0 || pfIdx >= (int)reachable.size() || !reachable[pfIdx]) continue;
 
-            if (!deadlocked && visited.find(next) == visited.end()) {
-                path.push_back((char)dir);
-                if (bruteForceRecursive(next, depth + 1, maxDepth, path, visited, nodes)) return true;
-                path.pop_back(); // Backtracking
+            // Destination valide ?
+            int dtR = box.first + neighbours[dir].first;
+            int dtC = box.second + neighbours[dir].second;
+            if (isWall({dtR, dtC}) || m_field[dtR][dtC].isDeadlock) continue;
+            if (std::binary_search(current.boxesPos.begin(), current.boxesPos.end(), std::pair<int,int>{dtR, dtC})) continue;
+
+            // Construire l'état après la poussée
+            Node next = current;
+            next.boxesPos[i] = {dtR, dtC};
+            std::sort(next.boxesPos.begin(), next.boxesPos.end());
+
+            // Position canonique du joueur dans le nouvel état (il se trouve sur l'ancienne case de la boîte)
+            std::vector<bool> tmpMask(m_lig * m_col);
+            std::pair<int, int> nextCanon;
+            getReachable(box, next.boxesPos, tmpMask, nextCanon);
+            next.playerPos = nextCanon;
+
+            if (cameFrom.find(next) == cameFrom.end()) {
+                cameFrom[next] = {current, (char)dir, (int)i};
+                if (bruteForceRecursive(next, depth + 1, maxDepth, cameFrom, goalNode)) return true;
             }
         }
     }
-    visited.erase(current);
+
     return false;
 }
 

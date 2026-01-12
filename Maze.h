@@ -113,6 +113,9 @@ private:
     // Reconstruction finale
     std::vector<char> reconstructFullPath(Node current, Node start, std::unordered_map<Node, Chain, NodeHash>& cameFrom) const;
 
+    // Helper pour le brute force optimisé
+    bool bruteForceRecursive(Node& current, int depth, int maxDepth, std::unordered_map<Node, Chain, NodeHash>& cameFrom, Node& goalNode);
+
 public:
     Maze(const std::string& levelPath);
 
@@ -121,10 +124,6 @@ public:
     bool isWall(const std::pair<int, int>& p) const;
     bool isGoal(const std::pair<int, int>& p) const;
     bool isSolution(const Node& n) const;
-    bool bruteForceRecursive(Node& current, int depth, int maxDepth, 
-                             std::vector<char>& path, 
-                             std::unordered_set<Node, NodeHash>& visited, 
-                             unsigned long long& nodes);
     void draw(GraphicAllegro5& g) const;
 
     void playSolution(GraphicAllegro5& g, const std::vector<char>& sol);

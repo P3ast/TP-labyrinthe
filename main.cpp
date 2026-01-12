@@ -4,7 +4,7 @@
 GraphicAllegro5 graphic(1024, 768);
 
 int main() {
-    const std::string level = "levels/Easy1.txt";
+    const std::string level = "levels/Easy2.txt";
     Maze m(level);
     graphic.show();
 
@@ -35,7 +35,7 @@ int main() {
             std::vector<char> sol = m.solveAStar();
             if (!sol.empty()) m.playSolution(graphic, sol);
         }
-        if (graphic.keyGet(ALLEGRO_KEY_R)) m = Maze(level); // la touche R nous permet de redémarrer le niveau 
+        if (graphic.keyGet(ALLEGRO_KEY_R)) m = Maze(level); // la touche R nous permet de redémarrer le niveau
 
         graphic.clear();
         m.draw(graphic);
