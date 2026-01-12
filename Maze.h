@@ -37,6 +37,10 @@ struct NodeHash {
         size_t seed = 0;
         seed ^= std::hash<int>{}(n.playerPos.first) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
         seed ^= std::hash<int>{}(n.playerPos.second) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        // On incorpore chaque coordonnée de chaque boîte au seed du hash.
+        // Ceci permet d'obtenir un hash qui dépend à la fois de la position du joueur
+        // et des positions des boîtes : deux états avec des caisses différemment placées
+        // produiront (probablement) des valeurs de hash différentes.
         for (const auto& box : n.boxesPos) {
             seed ^= std::hash<int>{}(box.first) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
             seed ^= std::hash<int>{}(box.second) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
@@ -61,10 +65,15 @@ struct Square {
     bool isDeadlock = false; // si ça passe à vrai, c'est qu'un coin à été détecté
 };
 
+// Vecteur des déplacements voisins sous forme (delta_ligne, delta_colonne).
+// L'ordre est important et correspond aux directions TOP, BOTTOM, LEFT, RIGHT.
+// Utilisé pour calculer (r +/- 1, c +/- 1) lors des poussées et des recherches de voisins.
 const std::vector<std::pair<int,int>> neighbours = {
     {-1, 0}, {1, 0}, {0, -1}, {0, 1} // TOP, BOTTOM, LEFT, RIGHT
 };
 
+// Enumération pour référencer les directions par nom (plutôt que par entier brut).
+// Les valeurs correspondent aux indices dans `neighbours` et à l'ordre de parcours.
 enum Direction { TOP = 0, BOTTOM = 1, LEFT = 2, RIGHT = 3, DIRECTION_MAX = 4 };
 
 // Structure pour reconstruire le chemin (Parent + Mouvement)

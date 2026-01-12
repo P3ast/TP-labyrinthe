@@ -335,20 +335,11 @@ std::vector<char> Maze::solveBFS() {
         Node curr = q.front(); q.pop();
         if (isSolution(curr)) return reconstructFullPath(curr, start, cameFrom);
 
-        // Recalcule les cases atteignables par le joueur depuis l'état courant (sans pousser de boîte).
-        // Le vecteur `reachable` indique quelles cases sont atteignables ; `canon` reçoit la position "canonique" du joueur
-        // (optimisation qui réduit les états équivalents en normalisant la position du joueur).
         getReachable(curr.playerPos, curr.boxesPos, reachable, canon);
 
-        // Boucle 1 : parcourir toutes les boîtes de l'état courant pour tester les poussées possibles
         for (size_t i = 0; i < curr.boxesPos.size(); ++i) {
-            // Récupère la position (ligne, colonne) de la i-ème boîte
             std::pair<int, int> box = curr.boxesPos[i];
-
-            // Boucle 2 : tester chaque direction de poussée (ex. haut/bas/gauche/droite)
-            // `neighbours[dir]` contient le déplacement correspondant à la direction `dir`.
             for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
-                // Position "poussante" (case où le joueur doit se tenir pour pousser)
                 int pfR = box.first - neighbours[dir].first;
                 int pfC = box.second - neighbours[dir].second;
                 int pfIdx = toIndex(pfR, pfC);
@@ -357,19 +348,15 @@ std::vector<char> Maze::solveBFS() {
                 if (pfIdx < 0 || pfIdx >= (int)reachable.size() || !reachable[pfIdx]) continue;
 
                 // Destination valide ?
-                // dtR/dtC = position où la boîte arriverait après la poussée dans la direction `dir`
                 int dtR = box.first + neighbours[dir].first;
                 int dtC = box.second + neighbours[dir].second;
                 if (isWall({dtR, dtC}) || m_field[dtR][dtC].isDeadlock) continue;
                 if (std::binary_search(curr.boxesPos.begin(), curr.boxesPos.end(), std::pair<int,int>{dtR, dtC})) continue;
 
-                // Nouvel état après la poussée
+                // Nouvel état
                 Node next = curr;
-                // Met à jour la position de la boîte i-ème vers la destination calculée
                 next.boxesPos[i] = {dtR, dtC};
-                // Trie les positions des boîtes pour conserver une représentation canonique de l'état
-                // (évite que deux états identiques mais avec boîtes dans un ordre différent soient traités comme différents)
-                std::sort(next.boxesPos.begin(), next.boxesPos.end());
+                std::sort(next.boxesPos.begin(), next.boxesPos.end());,
 
                 std::vector<bool> tempMask(m_lig * m_col);
                 std::pair<int, int> nextCanon;
@@ -399,6 +386,9 @@ std::vector<char> Maze::solveBFS() {
 // - Remarque : `cameFrom` empêche les boucles infinites ; la reconstruction du chemin se fait avec `reconstructFullPath`.
 
 std::vector<char> Maze::solveDFS() {
+    // Réinitialise l'état du jeu à l'état de départ (`m_startState`).
+    // Cela garantit que l'algorithme DFS démarre toujours du même point (important
+    // si on exécute plusieurs algorithmes les uns après les autres).
     setGameState(m_startState);
     std::cout << "--- Start DFS ---" << std::endl;
     std::stack<Node> s;
@@ -415,35 +405,56 @@ std::vector<char> Maze::solveDFS() {
     cameFrom[start] = {start, -1, -1};
 
     while (!s.empty()) {
+        // Récupère l'état courant à traiter (pile LIFO)
         Node curr = s.top(); s.pop();
+        // if (ligne ~...) : si l'état courant est une solution, on reconstruit immédiatement
+        // la séquence complète de déplacements du joueur et on retourne le résultat.
         if (isSolution(curr)) return reconstructFullPath(curr, start, cameFrom);
 
+        // Met à jour le masque des cases atteignables par le joueur depuis `curr` (sans pousser de boîte)
         getReachable(curr.playerPos, curr.boxesPos, reachable, canon);
 
-        // Ordre inverse pour DFS
+        // Boucle extérieure (itère sur les boîtes). On parcourt dans l'ordre inverse
+        // pour garantir un comportement déterministe du DFS.
         for (int i = (int)curr.boxesPos.size() - 1; i >= 0; --i) {
+            // Position de la i-ème boîte
             std::pair<int, int> box = curr.boxesPos[i];
+
+            // Boucle intérieure (itère sur toutes les directions possibles de poussée)
             for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
+                // `pfR` / `pfC` = coordonnées de la case "push-from" : l'endroit où le joueur doit se placer
+                // pour effectuer la poussée dans la direction `dir`.
                 int pfR = box.first - neighbours[dir].first;
                 int pfC = box.second - neighbours[dir].second;
                 int pfIdx = toIndex(pfR, pfC);
 
+                // if : vérifie si la case "push-from" est valide (dans la grille) et atteignable par le joueur.
+                // Si non, cette direction n'est pas possible et on passe à la suivante.
                 if (pfIdx < 0 || pfIdx >= (int)reachable.size() || !reachable[pfIdx]) continue;
 
+                // `dtR` / `dtC` = coordonnées de la case de destination où la boîte se retrouvera après la poussée
                 int dtR = box.first + neighbours[dir].first;
                 int dtC = box.second + neighbours[dir].second;
+                // if : si la destination est un mur ou un deadlock, la poussée est interdite
                 if (isWall({dtR, dtC}) || m_field[dtR][dtC].isDeadlock) continue;
+                // if : si la destination est déjà occupée par une autre boîte, on ignore aussi cette poussée
                 if (std::binary_search(curr.boxesPos.begin(), curr.boxesPos.end(), std::pair<int,int>{dtR, dtC})) continue;
 
+                // Construire le nouvel état résultant de la poussée
                 Node next = curr;
                 next.boxesPos[i] = {dtR, dtC};
+                // Normalisation : tri des positions de boîtes pour conserver une représentation canonique
                 std::sort(next.boxesPos.begin(), next.boxesPos.end());
 
+                // Calculer la position canonique du joueur dans le nouvel état :
+                // on suppose que le joueur se trouve sur l'ancienne case de la boîte (`box`) après la poussée
                 std::vector<bool> tempMask(m_lig * m_col);
                 std::pair<int, int> nextCanon;
-                getReachable(box, next.boxesPos, tempMask, nextCanon);
+                getReachable(box, next.boxesPos, tempMask, nextCanon); // remplit tempMask et nextCanon
                 next.playerPos = nextCanon;
 
+                // Si `next` n'a pas déjà été visité (pour DFS on utilise `cameFrom` comme marquage),
+                // on l'ajoute à la pile pour exploration.
                 if (cameFrom.find(next) == cameFrom.end()) {
                     cameFrom[next] = {curr, (char)dir, (int)i};
                     s.push(next);
@@ -456,8 +467,6 @@ std::vector<char> Maze::solveDFS() {
 
 // 3. Greedy (Best First) - Utilise h(n) uniquement
 std::vector<char> Maze::solveBestFirst() {
-    // Remet l'état du jeu à l'état de départ (`m_startState`) : utile si on exécute plusieurs algos l'un après l'autre
-    // pour s'assurer que l'algorithme commence toujours du même point.
     setGameState(m_startState);
     std::cout << "--- Start Greedy ---" << std::endl;
 
@@ -468,7 +477,6 @@ std::vector<char> Maze::solveBestFirst() {
     Node start = m_startState;
     std::vector<bool> reachable(m_lig * m_col);
     std::pair<int, int> canon;
-    // Calcule les cases atteignables par le joueur depuis l'état initial et la position canonique du joueur
     getReachable(start.playerPos, start.boxesPos, reachable, canon);
     start.playerPos = canon;
 
@@ -479,36 +487,24 @@ std::vector<char> Maze::solveBestFirst() {
         Node curr = pq.top().node; pq.pop();
         if (isSolution(curr)) return reconstructFullPath(curr, start, cameFrom);
 
-        // Met à jour le masque des cases atteignables pour l'état courant
         getReachable(curr.playerPos, curr.boxesPos, reachable, canon);
 
-        // Boucle 1 (ligne ~424) : pour chaque boîte de l'état courant, on va tester toutes les poussées possibles
         for (size_t i = 0; i < curr.boxesPos.size(); ++i) {
             std::pair<int, int> box = curr.boxesPos[i];
-
-            // Boucle 2 (ligne ~426) : itère sur toutes les directions (haut, bas, gauche, droite)
             for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
-                // `pfR`/`pfC` = coordonnées de la case "push-from" (la case où le joueur doit se placer pour pousser la boîte)
                 int pfR = box.first - neighbours[dir].first;
                 int pfC = box.second - neighbours[dir].second;
                 int pfIdx = toIndex(pfR, pfC);
 
-                // if (ligne ~431) : on vérifie que la case de poussée existe dans la grille et que le joueur
-                // peut l'atteindre (grâce à `reachable`); sinon on passe à la direction suivante.
                 if (pfIdx < 0 || pfIdx >= (int)reachable.size() || !reachable[pfIdx]) continue;
 
-                // dtR/dtC = coordonnées de la destination de la boîte après la poussée
                 int dtR = box.first + neighbours[dir].first;
                 int dtC = box.second + neighbours[dir].second;
-
-                // if (ligne ~435) : si la destination est un mur ou un deadlock (position interdite), on ignore cette poussée
                 if (isWall({dtR, dtC}) || m_field[dtR][dtC].isDeadlock) continue;
-                // if (ligne ~436) : si la destination est déjà occupée par une autre boîte, on ignore aussi
                 if (std::binary_search(curr.boxesPos.begin(), curr.boxesPos.end(), std::pair<int,int>{dtR, dtC})) continue;
 
                 Node next = curr;
                 next.boxesPos[i] = {dtR, dtC};
-                // Tri pour la canonicité de l'état (éviter doublons d'états identiques avec ordres différents)
                 std::sort(next.boxesPos.begin(), next.boxesPos.end());
 
                 std::vector<bool> tempMask(m_lig * m_col);
