@@ -538,15 +538,15 @@ std::vector<char> Maze::solveBestFirst() {
 //   où W est un poids multiplicatif (W > 1 = plus agressif, plus vite mais moins optimal)
 // 
 // AVANTAGES :
-//   ✓ Garantit d'avoir une solution optimale (contrairement à Greedy)
-//   ✓ Plus efficace que BFS car l'heuristique guide la recherche
-//   ✓ Explore moins d'états inutiles que BFS grâce au W pondérant
+//   Garantit d'avoir une solution optimale (contrairement à Greedy)
+//   Plus efficace que BFS car l'heuristique guide la recherche
+//   Explore moins d'états inutiles que BFS grâce au W pondérant
 // 
 // STRUCTURES DE DONNÉES :
 //   - `pq` (Priority Queue) : file prioritaire min-heap
-//     → extrait toujours l'état avec la PLUS PETITE priorité
-//   - `costSoFar` : map Node → nombre de poussées depuis le départ
-//   - `cameFrom` : map Node → (Parent + Direction + Index Boîte) pour reconstruction
+//      extrait toujours l'état avec la PLUS PETITE priorité
+//   - `costSoFar` : map Node nombre de poussées depuis le départ
+//   - `cameFrom` : map Node (Parent + Direction + Index Boîte) pour reconstruction
 // 
 // ============================================================
 
@@ -648,7 +648,7 @@ std::vector<char> Maze::solveAStar() {
                 // Le coût du nouvel état = coût actuel + 1 poussée
                 int newCost = currentCost + 1;
                 
-                // === CRITÈRE DE RELAXATION (comme dans Dijkstra) ===
+                // === CRITÈRE DE RELAXATION ===
                 // N'ajouter/mettre à jour le nouvel état que si :
                 //   - Nous l'explorons pour la 1ère fois, OU
                 //   - Nous trouvons un chemin plus court que celui connu
