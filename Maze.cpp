@@ -29,7 +29,7 @@ Maze::Maze(const std::string& levelPath) {
                 if (s.sprite == SpriteType::PLAYER || s.sprite == SpriteType::PLAYER_ON_GOAL) {
                     this->m_playerPosition = std::make_pair(i, j);
                     s.sprite = (s.sprite == SpriteType::PLAYER_ON_GOAL) ? SpriteType::GOAL : SpriteType::GROUND;
-                }sh_back({(int)i, (int)j});
+                }
                 if (s.sprite == SpriteType::GOAL || s.sprite == SpriteType::BOX_PLACED) {
                     m_goals.push_back({(int)i, (int)j});
                 }
@@ -356,7 +356,7 @@ std::vector<char> Maze::solveBFS() {
                 // Nouvel état
                 Node next = curr;
                 next.boxesPos[i] = {dtR, dtC};
-                std::sort(next.boxesPos.begin(), next.boxesPos.end());,
+                std::sort(next.boxesPos.begin(), next.boxesPos.end());
 
                 std::vector<bool> tempMask(m_lig * m_col);
                 std::pair<int, int> nextCanon;
