@@ -3,11 +3,11 @@
 
 #include <string>
 #include <vector>
-#include <queue>
-#include <stack>
-#include <unordered_set>
-#include <unordered_map>
-#include <algorithm>
+#include <queue>          // Pour le BFS (files d'attente)
+#include <stack>          // Pour le DFS (piles)
+#include <unordered_set>  // Pour stocker les états déjà visités
+#include <unordered_map>  // Pour la reconstruction du chemin
+#include <algorithm>      // Pour le tri des positions
 #include <iostream>
 #include "GraphicAllegro5.h"
 
@@ -20,16 +20,18 @@ enum class SpriteType : unsigned char {
 };
 
 // Node optimisé (sans path pour économiser la RAM)
+// position du joueur et des caisses stockées dans le node
 struct Node {
     std::pair<int, int> playerPos;
     std::vector<std::pair<int, int>> boxesPos;
 
-    bool operator==(const Node& other) const {
+    bool operator==(const Node& other) const { // compare 2 photos pour savoir si elles sont identiques
         return playerPos == other.playerPos && boxesPos == other.boxesPos;
     }
 };
 
 // Hash pour unordered_map
+// le Hash permet à l'AI de vérifier si elle à déja testé une configuration
 struct NodeHash {
     size_t operator()(const Node& n) const {
         size_t seed = 0;
@@ -43,7 +45,7 @@ struct NodeHash {
     }
 };
 
-// Noeud prioritaire pour A* et Greedy
+// Noeud prioritaire pour A* et Greedy, permet de classer les chemins du meilleur au moins bon
 struct PriorityNode {
     Node node;
     double priority;
@@ -56,7 +58,7 @@ struct PriorityNode {
 struct Square {
     std::pair<int, int> position;
     SpriteType sprite;
-    bool isDeadlock = false;
+    bool isDeadlock = false; // si ça passe à vrai, c'est qu'un coin à été détecté
 };
 
 const std::vector<std::pair<int,int>> neighbours = {

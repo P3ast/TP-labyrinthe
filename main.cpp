@@ -14,28 +14,28 @@ int main() {
         if (graphic.keyGet(ALLEGRO_KEY_LEFT)) m.updatePlayer(LEFT);
         if (graphic.keyGet(ALLEGRO_KEY_RIGHT)) m.updatePlayer(RIGHT);
 
-        if (graphic.keyGet(ALLEGRO_KEY_F)) { // Touche F pour Brute Force
+        if (graphic.keyGet(ALLEGRO_KEY_F)) { // la touche F nous permet de résoudre le Brute Force
             std::vector<char> sol = m.solveBruteForce();
             if (!sol.empty()) m.playSolution(graphic, sol);
         }
 
-        if (graphic.keyGet(ALLEGRO_KEY_B)) { // BFS
+        if (graphic.keyGet(ALLEGRO_KEY_B)) { // la touche B nous permet de résoudre le BFS
             std::vector<char> sol = m.solveBFS();
             if (!sol.empty()) m.playSolution(graphic, sol);
         }
-        if (graphic.keyGet(ALLEGRO_KEY_D)) { // DFS
+        if (graphic.keyGet(ALLEGRO_KEY_D)) { // la touche D nous permet de résoudre le DFS
             std::vector<char> sol = m.solveDFS();
             if (!sol.empty()) m.playSolution(graphic, sol);
         }
-        if (graphic.keyGet(ALLEGRO_KEY_G)) { // Greedy (Best First)
+        if (graphic.keyGet(ALLEGRO_KEY_G)) { // la touche G nous permet de résoudre le Greedy (Best First)
             std::vector<char> sol = m.solveBestFirst();
             if (!sol.empty()) m.playSolution(graphic, sol);
         }
-        if (graphic.keyGet(ALLEGRO_KEY_A)) { // A*
+        if (graphic.keyGet(ALLEGRO_KEY_A)) { // la touche A nous permet de résoudre le A*
             std::vector<char> sol = m.solveAStar();
             if (!sol.empty()) m.playSolution(graphic, sol);
         }
-        if (graphic.keyGet(ALLEGRO_KEY_R)) m = Maze(level);
+        if (graphic.keyGet(ALLEGRO_KEY_R)) m = Maze(level); // la touche R nous permet de redémarrer le niveau 
 
         graphic.clear();
         m.draw(graphic);
