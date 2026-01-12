@@ -11,19 +11,19 @@
 #include <iostream>
 #include "GraphicAllegro5.h"
 
-// --- CONFIG ---
+// --- TYPES & STRUCTURES ---
+
 enum class SpriteType : unsigned char {
     GROUND = ' ', OUTSIDE = 'X', WALL = '#',
     PLAYER = '@', PLAYER_ON_GOAL = '+',
     BOX = '$', BOX_PLACED = '*', GOAL = '.'
 };
 
-// Node optimisé
+// Node optimisé (sans path pour économiser la RAM)
 struct Node {
     std::pair<int, int> playerPos;
     std::vector<std::pair<int, int>> boxesPos;
 
-    // Egalité pour le Hash Map
     bool operator==(const Node& other) const {
         return playerPos == other.playerPos && boxesPos == other.boxesPos;
     }
@@ -43,11 +43,13 @@ struct NodeHash {
     }
 };
 
-// Noeud prioritaire pour A*
+// Noeud prioritaire pour A* et Greedy
 struct PriorityNode {
     Node node;
     double priority;
+
     PriorityNode(Node n, double p) : node(n), priority(p) {}
+    // Plus petite priorité en haut (Min-Heap)
     bool operator>(const PriorityNode& other) const { return priority > other.priority; }
 };
 
@@ -63,6 +65,13 @@ const std::vector<std::pair<int,int>> neighbours = {
 
 enum Direction { TOP = 0, BOTTOM = 1, LEFT = 2, RIGHT = 3, DIRECTION_MAX = 4 };
 
+// Structure pour reconstruire le chemin (Parent + Mouvement)
+struct Chain {
+    Node parent;
+    char move; // Direction de la poussée
+    int boxIdx; // Index de la boite poussée (pour reconstruction précise)
+};
+
 class Maze {
 private:
     std::vector<std::vector<Square>> m_field;
@@ -71,13 +80,15 @@ private:
     char m_playerDirection = RIGHT;
 
     std::vector<std::pair<int, int>> m_goals;
+
+    // Etat de départ pour le Reset
     Node m_startState;
 
     // Matrices & Cache
     std::vector<std::vector<int>> m_distanceMatrix;
     std::unordered_map<Node, double, NodeHash> m_heuristicCache;
 
-    // --- NOUVELLES FONCTIONS OPTIMISATION ---
+    // --- HELPERS ---
     std::vector<std::pair<int, int>> getBoxesPositions() const;
     void setGameState(const Node& n);
 
@@ -87,6 +98,9 @@ private:
     // Helpers "Push-Only"
     void getReachable(std::pair<int, int> start, const std::vector<std::pair<int, int>>& boxes, std::vector<bool>& mask, std::pair<int, int>& minPos) const;
     std::vector<char> getWalkPath(std::pair<int, int> start, std::pair<int, int> target, const std::vector<std::pair<int, int>>& boxes) const;
+
+    // Reconstruction finale
+    std::vector<char> reconstructFullPath(Node current, Node start, std::unordered_map<Node, Chain, NodeHash>& cameFrom) const;
 
 public:
     Maze(const std::string& levelPath);
@@ -98,20 +112,18 @@ public:
     bool isSolution(const Node& n) const;
     void draw(GraphicAllegro5& g) const;
 
-    // Fonction Replay
     void playSolution(GraphicAllegro5& g, const std::vector<char>& sol);
-
     void detectStaticDeadlocks();
 
-    // Algorithmes
+    // Algorithmes Séparés et Distincts
     std::vector<char> solveBFS();
     std::vector<char> solveDFS();
     std::vector<char> solveBestFirst();
-
-    // A* OPTIMISÉ (Push-Only)
     std::vector<char> solveAStar();
     std::vector<char> solveIDAstar();
 
+    // ICI : Ajout de la déclaration manquante
+    double calculateHeuristic(const Node& n);
     double calculateHeuristicFast(const Node& n);
 };
 

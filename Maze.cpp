@@ -40,10 +40,12 @@ Maze::Maze(const std::string& levelPath) {
         }
     }
 
+    // IMPORTANT : Sauvegarde de l'état initial APRES le chargement complet
     m_startState = { m_playerPosition, getBoxesPositions() };
+
     detectStaticDeadlocks();
 
-    // Matrice distances
+    // Matrice distances (Heuristique)
     unsigned int totalCells = m_lig * m_col;
     m_distanceMatrix.resize(totalCells);
     for (unsigned int cell = 0; cell < totalCells; ++cell) {
@@ -80,7 +82,7 @@ void Maze::detectStaticDeadlocks() {
     }
 }
 
-// --- HELPERS OPTIMISATION ---
+// --- HELPERS ---
 
 std::vector<std::pair<int, int>> Maze::getBoxesPositions() const {
     std::vector<std::pair<int, int>> boxes;
@@ -104,11 +106,9 @@ void Maze::setGameState(const Node& n) {
     }
 }
 
-// Calcul des cases accessibles par le joueur sans pousser (Flood Fill)
 void Maze::getReachable(std::pair<int, int> start, const std::vector<std::pair<int, int>>& boxes, std::vector<bool>& mask, std::pair<int, int>& minPos) const {
     std::fill(mask.begin(), mask.end(), false);
     std::queue<std::pair<int, int>> q;
-
     int startIdx = toIndex(start.first, start.second);
     mask[startIdx] = true;
     q.push(start);
@@ -116,9 +116,7 @@ void Maze::getReachable(std::pair<int, int> start, const std::vector<std::pair<i
 
     while(!q.empty()){
         auto curr = q.front(); q.pop();
-
-        // On garde la position "canonique" (la plus en haut à gauche) pour identifier la zone
-        if (curr < minPos) minPos = curr;
+        if (curr < minPos) minPos = curr; // Position canonique
 
         for (const auto& nbr : neighbours) {
             int nr = curr.first + nbr.first;
@@ -127,24 +125,18 @@ void Maze::getReachable(std::pair<int, int> start, const std::vector<std::pair<i
 
             if(nr < 0 || nr >= (int)m_lig || nc < 0 || nc >= (int)m_col) continue;
             if(mask[nidx] || isWall({nr, nc})) continue;
+            if(std::binary_search(boxes.begin(), boxes.end(), std::pair<int, int>{nr, nc})) continue;
 
-            // Bloqué par une boite ?
-            bool isBox = std::binary_search(boxes.begin(), boxes.end(), std::pair<int, int>{nr, nc});
-
-            if (!isBox) {
-                mask[nidx] = true;
-                q.push({nr, nc});
-            }
+            mask[nidx] = true;
+            q.push({nr, nc});
         }
     }
 }
 
-// Trouver le chemin de marche (BFS local)
 std::vector<char> Maze::getWalkPath(std::pair<int, int> start, std::pair<int, int> target, const std::vector<std::pair<int, int>>& boxes) const {
     if (start == target) return {};
     std::queue<std::pair<int, int>> q;
-    std::unordered_map<int, std::pair<int, char>> meta; // {ParentIndex, MoveChar}
-
+    std::unordered_map<int, std::pair<int, char>> meta;
     q.push(start);
     meta[toIndex(start.first, start.second)] = {-1, 0};
 
@@ -194,161 +186,301 @@ double Maze::calculateHeuristicFast(const Node& n) {
     return totalDist;
 }
 
-// --- SOLVER A* PUSH-ONLY (ULTRA RAPIDE) ---
+double Maze::calculateHeuristic(const Node& n) { return calculateHeuristicFast(n); }
 
-struct PushMove {
-    Node parent;
-    int boxIndex; // Quelle boite a bougé
-    int pushDir;  // Dans quelle direction
-};
+// --- RECONSTRUCTION ---
 
-std::vector<char> Maze::solveAStar() {
+std::vector<char> Maze::reconstructFullPath(Node current, Node start, std::unordered_map<Node, Chain, NodeHash>& cameFrom) const {
+    std::vector<char> fullPath;
+    std::vector<Chain> moves;
+
+    // 1. Remonter les poussées
+    Node curr = current;
+    while (!(curr == start)) {
+        if(cameFrom.find(curr) == cameFrom.end()) break;
+        Chain c = cameFrom[curr];
+        moves.push_back(c);
+        curr = c.parent;
+    }
+    std::reverse(moves.begin(), moves.end());
+
+    // 2. Simuler pour avoir les pas
+    Node simState = start;
+    for (const auto& move : moves) {
+        std::pair<int, int> boxPos = move.parent.boxesPos[move.boxIdx];
+
+        // Le joueur doit aller derrière la boite
+        std::pair<int, int> standPos = {
+            boxPos.first - neighbours[move.move].first,
+            boxPos.second - neighbours[move.move].second
+        };
+
+        // Chemin marche
+        std::vector<char> walk = getWalkPath(simState.playerPos, standPos, simState.boxesPos);
+        fullPath.insert(fullPath.end(), walk.begin(), walk.end());
+        fullPath.push_back((char)move.move); // Poussée
+
+        // Mise à jour simState (pour le prochain tour de boucle)
+        simState.playerPos = boxPos; // Joueur avance sur la case de la boite
+        // Bouger la boite
+        std::pair<int, int> newBoxPos = {
+            boxPos.first + neighbours[move.move].first,
+            boxPos.second + neighbours[move.move].second
+        };
+
+        // Mettre à jour le vecteur boxesPos de simState
+        for(size_t k=0; k<simState.boxesPos.size(); ++k) {
+            if(simState.boxesPos[k] == boxPos) {
+                simState.boxesPos[k] = newBoxPos;
+                break;
+            }
+        }
+        std::sort(simState.boxesPos.begin(), simState.boxesPos.end());
+    }
+    return fullPath;
+}
+
+// --- ALGORITHMES SEPARÉS ---
+
+// 1. BFS (Push-Only, Optimal en Poussées)
+std::vector<char> Maze::solveBFS() {
     setGameState(m_startState);
-    std::cout << "--- Start A* (Push-Only Optimized) ---" << std::endl;
+    std::cout << "--- Start BFS ---" << std::endl;
+    std::queue<Node> q;
+    std::unordered_map<Node, Chain, NodeHash> cameFrom; // Pour reconstruction
 
-    std::priority_queue<PriorityNode, std::vector<PriorityNode>, std::greater<PriorityNode>> pq;
-    std::unordered_map<Node, int, NodeHash> costSoFar;
-    std::unordered_map<Node, PushMove, NodeHash> cameFrom;
-
-    // Normalisation de l'état de départ
+    // Init
     Node start = m_startState;
-    std::vector<bool> reachableMask(m_lig * m_col);
-    std::pair<int, int> canonicalPos;
-    getReachable(start.playerPos, start.boxesPos, reachableMask, canonicalPos);
-    start.playerPos = canonicalPos; // Le joueur est "partout" dans la zone, on stocke le min
+    std::vector<bool> reachable(m_lig * m_col);
+    std::pair<int, int> canon;
+    getReachable(start.playerPos, start.boxesPos, reachable, canon);
+    start.playerPos = canon;
 
-    pq.push(PriorityNode(start, 0));
-    costSoFar[start] = 0;
+    q.push(start);
     cameFrom[start] = {start, -1, -1}; // Racine
 
-    Node finalNode;
-    bool found = false;
+    while (!q.empty()) {
+        Node curr = q.front(); q.pop();
+        if (isSolution(curr)) return reconstructFullPath(curr, start, cameFrom);
 
-    while (!pq.empty()) {
-        Node curr = pq.top().node; pq.pop();
+        getReachable(curr.playerPos, curr.boxesPos, reachable, canon);
 
-        if (isSolution(curr)) {
-            finalNode = curr;
-            found = true;
-            break;
-        }
-
-        int currentCost = costSoFar[curr];
-
-        // 1. Recalculer la zone accessible pour cet état
-        // (On ne stocke pas le masque dans le Node pour économiser la RAM)
-        getReachable(curr.playerPos, curr.boxesPos, reachableMask, canonicalPos);
-
-        // 2. Tester toutes les poussées possibles
         for (size_t i = 0; i < curr.boxesPos.size(); ++i) {
             std::pair<int, int> box = curr.boxesPos[i];
-
             for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
-                // Pour pousser vers DIR, le joueur doit être à l'opposé
-                int pushFromR = box.first - neighbours[dir].first;
-                int pushFromC = box.second - neighbours[dir].second;
+                int pfR = box.first - neighbours[dir].first;
+                int pfC = box.second - neighbours[dir].second;
+                int pfIdx = toIndex(pfR, pfC);
 
-                // Le joueur peut-il atteindre la case de poussée ?
-                int pushFromIdx = toIndex(pushFromR, pushFromC);
-                if (pushFromIdx < 0 || pushFromIdx >= (int)reachableMask.size() || !reachableMask[pushFromIdx]) continue;
+                // Joueur peut atteindre la case de poussée ?
+                if (pfIdx < 0 || pfIdx >= (int)reachable.size() || !reachable[pfIdx]) continue;
 
-                // La case d'arrivée est-elle libre ?
-                int destR = box.first + neighbours[dir].first;
-                int destC = box.second + neighbours[dir].second;
-                if (isWall({destR, destC})) continue;
-                if (std::binary_search(curr.boxesPos.begin(), curr.boxesPos.end(), std::pair<int, int>{destR, destC})) continue;
-                if (m_field[destR][destC].isDeadlock) continue; // Deadlock check
+                // Destination valide ?
+                int dtR = box.first + neighbours[dir].first;
+                int dtC = box.second + neighbours[dir].second;
+                if (isWall({dtR, dtC}) || m_field[dtR][dtC].isDeadlock) continue;
+                if (std::binary_search(curr.boxesPos.begin(), curr.boxesPos.end(), std::pair<int,int>{dtR, dtC})) continue;
 
-                // Créer le nouvel état
+                // Nouvel état
                 Node next = curr;
-                next.boxesPos[i] = {destR, destC};
+                next.boxesPos[i] = {dtR, dtC};
                 std::sort(next.boxesPos.begin(), next.boxesPos.end());
 
-                // Normaliser la position du joueur (il est maintenant à la place de la boite)
                 std::vector<bool> tempMask(m_lig * m_col);
-                std::pair<int, int> nextCanonical;
-                getReachable({box.first, box.second}, next.boxesPos, tempMask, nextCanonical);
-                next.playerPos = nextCanonical;
+                std::pair<int, int> nextCanon;
+                getReachable(box, next.boxesPos, tempMask, nextCanon); // Joueur est sur l'ancienne case boite
+                next.playerPos = nextCanon;
 
-                int newCost = currentCost + 1; // Coût = 1 poussée
-
-                if (costSoFar.find(next) == costSoFar.end() || newCost < costSoFar[next]) {
-                    costSoFar[next] = newCost;
-                    double priority = newCost + (calculateHeuristicFast(next) * 2.0); // Poids x2 pour vitesse
-                    pq.push(PriorityNode(next, priority));
-                    cameFrom[next] = {curr, (int)i, dir};
+                if (cameFrom.find(next) == cameFrom.end()) {
+                    cameFrom[next] = {curr, (char)dir, (int)i};
+                    q.push(next);
                 }
             }
         }
     }
-
-    if (found) {
-        std::cout << "Solution Found! Reconstructing path..." << std::endl;
-        std::vector<char> fullPath;
-        std::vector<PushMove> moves;
-
-        Node curr = finalNode;
-        while (!(curr == start)) {
-            PushMove pm = cameFrom[curr];
-            moves.push_back(pm);
-            curr = pm.parent;
-        }
-        std::reverse(moves.begin(), moves.end());
-
-        // Reconstruction détaillée (Marche + Poussée)
-        Node simState = m_startState; // État physique réel
-        for (const auto& move : moves) {
-            // Identifier la boite à pousser dans l'état actuel (l'index i peut changer à cause du tri !)
-            // Astuce : On regarde l'état PARENT stocké dans le move
-            // La boite qui a bougé était à move.parent.boxesPos[move.boxIndex]
-            std::pair<int, int> boxToPush = move.parent.boxesPos[move.boxIndex];
-
-            // Case où le joueur doit aller pour pousser
-            std::pair<int, int> standPos = {
-                boxToPush.first - neighbours[move.pushDir].first,
-                boxToPush.second - neighbours[move.pushDir].second
-            };
-
-            // 1. Chemin de marche
-            std::vector<char> walk = getWalkPath(simState.playerPos, standPos, simState.boxesPos);
-            fullPath.insert(fullPath.end(), walk.begin(), walk.end());
-
-            // 2. La poussée
-            fullPath.push_back((char)move.pushDir);
-
-            // Mise à jour simState
-            simState.playerPos = boxToPush; // Joueur avance sur la case de la boite
-            // Bouger la boite dans le vecteur
-            for(auto& b : simState.boxesPos) {
-                if (b == boxToPush) {
-                    b.first += neighbours[move.pushDir].first;
-                    b.second += neighbours[move.pushDir].second;
-                    break;
-                }
-            }
-            std::sort(simState.boxesPos.begin(), simState.boxesPos.end());
-        }
-        return fullPath;
-    }
-
-    std::cout << "A* failed." << std::endl;
     return {};
 }
 
-// --- AUTRES SOLVERS (Compatibilité niveau 1) ---
-
-std::vector<char> Maze::solveBFS() {
-    // Version simplifiée qui appelle A* avec poids 0 (équivalent BFS en poussées)
-    // Pour rester simple et éviter le freeze
+// 2. DFS (Push-Only)
+std::vector<char> Maze::solveDFS() {
     setGameState(m_startState);
-    std::cout << "BFS (via Push-Only Engine)..." << std::endl;
-    // On réutilise le moteur A* car le BFS atomique freeze sur les gros niveaux
-    // Si vous voulez le BFS lent, remettez l'ancien code, mais je conseille celui-ci.
-    return solveAStar();
+    std::cout << "--- Start DFS ---" << std::endl;
+    std::stack<Node> s;
+    std::unordered_map<Node, Chain, NodeHash> cameFrom;
+
+    Node start = m_startState;
+    std::vector<bool> reachable(m_lig * m_col);
+    std::pair<int, int> canon;
+    getReachable(start.playerPos, start.boxesPos, reachable, canon);
+    start.playerPos = canon;
+
+    s.push(start);
+    cameFrom[start] = {start, -1, -1};
+
+    while (!s.empty()) {
+        Node curr = s.top(); s.pop();
+        if (isSolution(curr)) return reconstructFullPath(curr, start, cameFrom);
+
+        getReachable(curr.playerPos, curr.boxesPos, reachable, canon);
+
+        // Ordre inverse pour DFS
+        for (int i = (int)curr.boxesPos.size() - 1; i >= 0; --i) {
+            std::pair<int, int> box = curr.boxesPos[i];
+            for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
+                int pfR = box.first - neighbours[dir].first;
+                int pfC = box.second - neighbours[dir].second;
+                int pfIdx = toIndex(pfR, pfC);
+
+                if (pfIdx < 0 || pfIdx >= (int)reachable.size() || !reachable[pfIdx]) continue;
+
+                int dtR = box.first + neighbours[dir].first;
+                int dtC = box.second + neighbours[dir].second;
+                if (isWall({dtR, dtC}) || m_field[dtR][dtC].isDeadlock) continue;
+                if (std::binary_search(curr.boxesPos.begin(), curr.boxesPos.end(), std::pair<int,int>{dtR, dtC})) continue;
+
+                Node next = curr;
+                next.boxesPos[i] = {dtR, dtC};
+                std::sort(next.boxesPos.begin(), next.boxesPos.end());
+
+                std::vector<bool> tempMask(m_lig * m_col);
+                std::pair<int, int> nextCanon;
+                getReachable(box, next.boxesPos, tempMask, nextCanon);
+                next.playerPos = nextCanon;
+
+                if (cameFrom.find(next) == cameFrom.end()) {
+                    cameFrom[next] = {curr, (char)dir, (int)i};
+                    s.push(next);
+                }
+            }
+        }
+    }
+    return {};
 }
 
-std::vector<char> Maze::solveDFS() { return {}; } // DFS pas recommandé pour Medium
-std::vector<char> Maze::solveBestFirst() { return solveAStar(); } // Greedy via A* engine
+// 3. Greedy (Best First) - Utilise h(n) uniquement
+std::vector<char> Maze::solveBestFirst() {
+    setGameState(m_startState);
+    std::cout << "--- Start Greedy ---" << std::endl;
+
+    // Trie par h(n) seulement
+    std::priority_queue<PriorityNode, std::vector<PriorityNode>, std::greater<PriorityNode>> pq;
+    std::unordered_map<Node, Chain, NodeHash> cameFrom;
+
+    Node start = m_startState;
+    std::vector<bool> reachable(m_lig * m_col);
+    std::pair<int, int> canon;
+    getReachable(start.playerPos, start.boxesPos, reachable, canon);
+    start.playerPos = canon;
+
+    pq.push(PriorityNode(start, calculateHeuristicFast(start)));
+    cameFrom[start] = {start, -1, -1};
+
+    while (!pq.empty()) {
+        Node curr = pq.top().node; pq.pop();
+        if (isSolution(curr)) return reconstructFullPath(curr, start, cameFrom);
+
+        getReachable(curr.playerPos, curr.boxesPos, reachable, canon);
+
+        for (size_t i = 0; i < curr.boxesPos.size(); ++i) {
+            std::pair<int, int> box = curr.boxesPos[i];
+            for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
+                int pfR = box.first - neighbours[dir].first;
+                int pfC = box.second - neighbours[dir].second;
+                int pfIdx = toIndex(pfR, pfC);
+
+                if (pfIdx < 0 || pfIdx >= (int)reachable.size() || !reachable[pfIdx]) continue;
+
+                int dtR = box.first + neighbours[dir].first;
+                int dtC = box.second + neighbours[dir].second;
+                if (isWall({dtR, dtC}) || m_field[dtR][dtC].isDeadlock) continue;
+                if (std::binary_search(curr.boxesPos.begin(), curr.boxesPos.end(), std::pair<int,int>{dtR, dtC})) continue;
+
+                Node next = curr;
+                next.boxesPos[i] = {dtR, dtC};
+                std::sort(next.boxesPos.begin(), next.boxesPos.end());
+
+                std::vector<bool> tempMask(m_lig * m_col);
+                std::pair<int, int> nextCanon;
+                getReachable(box, next.boxesPos, tempMask, nextCanon);
+                next.playerPos = nextCanon;
+
+                if (cameFrom.find(next) == cameFrom.end()) {
+                    cameFrom[next] = {curr, (char)dir, (int)i};
+                    // Priorité = Heuristique seulement
+                    pq.push(PriorityNode(next, calculateHeuristicFast(next)));
+                }
+            }
+        }
+    }
+    return {};
+}
+
+// 4. A* (Pondéré) - Utilise g(n) + h(n)
+std::vector<char> Maze::solveAStar() {
+    setGameState(m_startState);
+    std::cout << "--- Start A* ---" << std::endl;
+
+    std::priority_queue<PriorityNode, std::vector<PriorityNode>, std::greater<PriorityNode>> pq;
+    std::unordered_map<Node, int, NodeHash> costSoFar;
+    std::unordered_map<Node, Chain, NodeHash> cameFrom;
+
+    Node start = m_startState;
+    std::vector<bool> reachable(m_lig * m_col);
+    std::pair<int, int> canon;
+    getReachable(start.playerPos, start.boxesPos, reachable, canon);
+    start.playerPos = canon;
+
+    pq.push(PriorityNode(start, 0));
+    costSoFar[start] = 0;
+    cameFrom[start] = {start, -1, -1};
+
+    double W = 5.0; // Poids heuristique pour vitesse
+
+    while (!pq.empty()) {
+        Node curr = pq.top().node; pq.pop();
+        if (isSolution(curr)) {
+            std::cout << "A* Solved! Nodes: " << costSoFar.size() << std::endl;
+            return reconstructFullPath(curr, start, cameFrom);
+        }
+
+        int currentCost = costSoFar[curr];
+        getReachable(curr.playerPos, curr.boxesPos, reachable, canon);
+
+        for (size_t i = 0; i < curr.boxesPos.size(); ++i) {
+            std::pair<int, int> box = curr.boxesPos[i];
+            for (int dir = 0; dir < DIRECTION_MAX; ++dir) {
+                int pfR = box.first - neighbours[dir].first;
+                int pfC = box.second - neighbours[dir].second;
+                int pfIdx = toIndex(pfR, pfC);
+
+                if (pfIdx < 0 || pfIdx >= (int)reachable.size() || !reachable[pfIdx]) continue;
+
+                int dtR = box.first + neighbours[dir].first;
+                int dtC = box.second + neighbours[dir].second;
+                if (isWall({dtR, dtC}) || m_field[dtR][dtC].isDeadlock) continue;
+                if (std::binary_search(curr.boxesPos.begin(), curr.boxesPos.end(), std::pair<int,int>{dtR, dtC})) continue;
+
+                Node next = curr;
+                next.boxesPos[i] = {dtR, dtC};
+                std::sort(next.boxesPos.begin(), next.boxesPos.end());
+
+                std::vector<bool> tempMask(m_lig * m_col);
+                std::pair<int, int> nextCanon;
+                getReachable(box, next.boxesPos, tempMask, nextCanon);
+                next.playerPos = nextCanon;
+
+                int newCost = currentCost + 1;
+                if (costSoFar.find(next) == costSoFar.end() || newCost < costSoFar[next]) {
+                    costSoFar[next] = newCost;
+                    double priority = newCost + (calculateHeuristicFast(next) * W);
+                    pq.push(PriorityNode(next, priority));
+                    cameFrom[next] = {curr, (char)dir, (int)i};
+                }
+            }
+        }
+    }
+    return {};
+}
 
 // --- BASICS ---
 
@@ -394,11 +526,14 @@ void Maze::draw(GraphicAllegro5& g) const {
     g.drawT(g.getSpritePlayer(m_playerDirection), m_playerPosition.second, m_playerPosition.first);
 }
 
-// Fonction de Replay
+// Fonction de Replay avec boucle
 void Maze::playSolution(GraphicAllegro5& g, const std::vector<char>& sol) {
     bool replay = true;
     while(replay) {
+        // Reset
         setGameState(m_startState);
+
+        // Affichage initial pour éviter l'écran blanc
         g.clear(); this->draw(g); g.display();
 
         std::cout << "Playing solution (" << sol.size() << " steps)..." << std::endl;
@@ -407,13 +542,16 @@ void Maze::playSolution(GraphicAllegro5& g, const std::vector<char>& sol) {
         for (const auto& m : sol) {
             this->updatePlayer(m);
             g.clear(); this->draw(g); g.display();
+
+            // Check ECHAP pour sortir pendant l'animation
             if (g.keyGet(ALLEGRO_KEY_ESCAPE, false)) return;
+
             al_rest(0.05);
         }
 
         std::cout << "Termine ! [ESPACE] Replay, [ENTREE] Quitter" << std::endl;
-        al_rest(0.5);
 
+        // Attente input
         while (true) {
             al_rest(0.01);
             if (g.keyGet(ALLEGRO_KEY_SPACE, false)) { replay = true; break; }
